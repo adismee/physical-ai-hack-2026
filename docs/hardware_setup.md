@@ -9,7 +9,7 @@ Claude Code can walk you through these steps: see "For organizers" in the README
 You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
 
 ```bash
-sudo apt install git git-lfs adb tmux curl
+sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-headers-$(uname -r)
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
