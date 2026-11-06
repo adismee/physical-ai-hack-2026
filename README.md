@@ -58,7 +58,7 @@ claude
 > /station-setup
 ```
 
-Claude runs the checks and fills in the config with you. You do everything physical, and everything that powers or moves an arm (`CLAUDE.md` holds its rules).
+On its first start in this repo, Claude Code asks you to approve the project's `dreamlabs-docs` server. Claude runs the checks and fills in the config with you. You do everything physical, and everything that powers or moves an arm (`CLAUDE.md` holds its rules).
 
 No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --sim` drives i2rt's simulated arms with the Quest and records blank camera frames, so you can try the whole flow.
 
