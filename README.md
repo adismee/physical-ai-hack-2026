@@ -30,6 +30,11 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
    ```bash
    tmux new -A -s collect                          # keeps the session running if your connection drops
+   ```
+
+   Run that line on its own, then type these in the screen it opens:
+
+   ```bash
    cd ~/physical-ai-hacks
    uv run dhk-collect --config configs/station.yaml --dry-run      # practice: the arms do not move
    uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes

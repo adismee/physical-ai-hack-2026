@@ -16,6 +16,11 @@ Your station is already set up; this is where you start. You teach the model by 
 
    ```bash
    tmux new -A -s collect
+   ```
+
+   Run it on its own: it opens a new screen, and lines pasted along with it do not reach that screen. Type the rest in the screen it opens:
+
+   ```bash
    cd ~/physical-ai-hacks
    ```
 
@@ -67,6 +72,11 @@ Replace `<user>@<station>` with your station's login, which the organizers give 
 
 ```bash
 tmux new -A -s collect          # after a drop, reconnect from the laptop and run the same line to get back to it
+```
+
+Run it on its own, then type the rest in the screen it opens (lines pasted along with it do not reach that screen):
+
+```bash
 cd ~/physical-ai-hacks
 ```
 
