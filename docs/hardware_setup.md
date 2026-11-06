@@ -10,6 +10,7 @@ You need Ubuntu 26.04 LTS on an x86-64 computer (the version the stations run an
 
 ```bash
 sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-headers-$(uname -r)
+sudo usermod -aG video $USER                     # lets SSH sessions open the cameras (from your next login)
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv brings its own Python 3.13 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
@@ -17,7 +18,7 @@ git clone https://github.com/koustubh1012/physical-ai-hacks.git
 cd physical-ai-hacks
 ```
 
-Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
+Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Log out and back in once (over SSH, reconnect) so the `video` group applies: without it, nothing started over SSH can open a camera, because Ubuntu gives the cameras only to whoever is logged in at the station's own screen. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
 
 Install the dependencies for your arm type. A station installs one arm type, never both:
 

@@ -77,6 +77,11 @@ if command -v adb >/dev/null && adb devices 2>/dev/null | grep -q 'device$'; the
   has_quest_app=1
   echo "  (adb)	the teleop app on the connected Quest"
 fi
+in_video=0
+if id -nG "$USER" | tr " " "\n" | grep -qx video; then
+  in_video=1
+  echo "  (group)	$USER's membership of the video group"
+fi
 apt_found=()
 if [ "$with_apt" = 1 ]; then
   for package in "${apt_packages[@]}"; do
@@ -87,7 +92,7 @@ if [ "$with_apt" = 1 ]; then
   [ "${#apt_found[@]}" -gt 0 ] && echo "  (apt)	${apt_found[*]}"
 fi
 if [ "${#found[@]}" -eq 0 ] && [ "${#system_found[@]}" -eq 0 ] && [ "${#profile_found[@]}" -eq 0 ] \
-  && [ "$has_lfs" = 0 ] && [ "$has_quest_app" = 0 ] && [ "${#apt_found[@]}" -eq 0 ]; then
+  && [ "$has_lfs" = 0 ] && [ "$has_quest_app" = 0 ] && [ "$in_video" = 0 ] && [ "${#apt_found[@]}" -eq 0 ]; then
   echo "  nothing: this computer has no station setup left"
   exit 0
 fi
@@ -110,6 +115,9 @@ done
 if [ "$has_lfs" = 1 ]; then
   git lfs uninstall >/dev/null 2>&1 || git config --global --remove-section filter.lfs 2>/dev/null
   echo "removed git-lfs's settings from ~/.gitconfig"
+fi
+if [ "$in_video" = 1 ]; then
+  sudo gpasswd -d "$USER" video >/dev/null && echo "removed $USER from the video group"
 fi
 if [ "${#system_found[@]}" -gt 0 ]; then
   sudo rm -f -- "${system_found[@]}" && echo "removed ${system_found[*]}"
