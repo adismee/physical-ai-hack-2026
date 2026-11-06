@@ -79,4 +79,4 @@ Summarize for the organizer:
 - What was checked, and what passed.
 - Anything left open, such as an unmeasured tool center point or a camera to re-mount.
 
-The station is ready when the config loads, the dry run's directions are right and the test dataset passes `--check`.
+The station is ready when the config loads, the dry run's directions are right and the test dataset passes `--check`. Then, only when the organizer says setup is finished, run `bash scripts/remove_api_key.sh` to remove the setup team's API key (teams save their own before fine-tuning), and pass on any warning it prints.

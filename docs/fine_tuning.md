@@ -4,7 +4,8 @@ Fine-tuning trains a copy of Dream-1 on your dataset through the Dream API. The 
 
 ## Before you start
 
-- **The Dream library** is already installed on your station, in `~/dream-env`, with the API key your jobs run under. The tools below run there, not in this repo's environment. (Outside the hackathon, the [Getting started page](https://platform.dreamlabs.ai/api-documentation/) installs it.)
+- **The Dream library** is already installed on your station, in `~/dream-env`. The tools below run there, not in this repo's environment. (Outside the hackathon, the [Getting started page](https://platform.dreamlabs.ai/api-documentation/) installs it.)
+- **Your team's API key**, saved on the station. Create one on the platform's [API Keys](https://platform.dreamlabs.ai/api-keys) page, then run step 2 of the [Getting started page](https://platform.dreamlabs.ai/api-documentation/) on the station: it asks for the key without showing it, checks it with the platform and saves it to `~/.dreamlabs/credentials`. Your datasets, jobs and models then belong to your team's account.
 - **Credits**: a job costs the price on the platform's [Billing](https://platform.dreamlabs.ai/billing) page ($200 at the time of writing). Check with the organizers before you queue one.
 - **Time**: about 7 to 8 hours of training, plus any wait in the queue, and up to an hour for your model's first start.
 

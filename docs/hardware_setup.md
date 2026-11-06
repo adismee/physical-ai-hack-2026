@@ -132,3 +132,5 @@ Participants work on the station over SSH, with no screen. Give every team the s
 ## 8. Before handing the station over
 
 Record two short episodes into a throwaway folder (`--dataset-dir ~/hackathon_data/station-test`) and check them with `~/dream-env/bin/python tools/finetune.py ~/hackathon_data/station-test --arm <arm> --check`. On a Metal or Maker arm, run `tools/add_eef.py` first and check the `-eef` folder. A station whose test passes is ready for participants.
+
+Last, remove the setup team's API key, so no team runs or fine-tunes on it: `bash scripts/remove_api_key.sh`. It deletes the key from `~/.dreamlabs/credentials` and its backup, keeps the platform addresses, and warns about a key still set in a shell, a startup file or a running `dreamcli`. Teams then save their own key with the Setup API page's key step before they fine-tune. `dreamcli setup` registered the station for Live View under the setup key's account; `dreamcli robot run` in a terminal does not depend on that, but check Live View with a team's key before relying on it.
