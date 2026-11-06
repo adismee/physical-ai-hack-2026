@@ -5,10 +5,15 @@ ready (DeviceSet.try_open()), and shows every device's state on the page and in 
 The checks here open nothing: the Quest is read through `adb devices`, the arms' links through `/sys/class/net` (CAN)
 or `/dev` (a serial adapter), so they can run every second, during a session too.
 
-One problem has a fix the dashboard can run: a CAN link that is down (as the links are after every reboot) gets a
-button that brings it up (apply_fix()). It runs `sudo -n ip link set <link> up type can bitrate 1000000`, which
-`scripts/allow_can_bringup.sh` lets the station's account run without a password, and nothing else; it never takes
-a link down, which would cut open arms off from their motors.
+Some problems have a fix the dashboard can run, as a button (DeviceSet.apply_fix()):
+
+- A CAN link that is down, as the links are after every reboot: `sudo -n ip link set <link> up type can bitrate
+  1000000`, which `scripts/allow_can_bringup.sh` lets the station's account run without a password, and nothing
+  else. It never takes a link down, which would cut open arms off from their motors.
+- A Quest whose data stopped (its app went behind Quest Home, or its log stream was cut when it slept): restart the
+  teleop app in front, on a new stream (quest.Quest.reconnect()).
+- A Quest adb cannot use yet (`unauthorized`, `no permissions`, `offline`), before it is open: restart adb, which also
+  shows the headset's "Allow USB debugging" prompt again.
 
 @see Status, DeviceSet, apply_fix()
 """
@@ -18,6 +23,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -35,6 +41,9 @@ CAMERA_LOST_AFTER_S = 1.0
 CAN_BITRATE = 1_000_000
 ## The fix id of bringing a CAN link up: this prefix, then the link's name.
 CAN_UP_FIX = "can-up:"
+## The fix ids of restarting the Quest's app, and of restarting adb.
+QUEST_RESTART_FIX = "quest-restart"
+ADB_RESTART_FIX = "adb-restart"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,6 +192,8 @@ class DeviceSet:
         open_quest: Callable[[str | None], Any] = quest.Quest,
         open_camera: Callable[[config.CameraConfig, int, int], Any] = cameras.Camera,
         adb_devices: Callable[[], str] = quest.adb_devices,
+        headset_state: Callable[[str | None], tuple[bool | None, str | None]] = quest.headset_state,
+        run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         sys_net: pathlib.Path = SYS_NET,
     ) -> None:
         """Opens nothing yet.
@@ -190,7 +201,8 @@ class DeviceSet:
         @param station The station config.
         @param sim A simulated YAM: no cameras or arm links to check.
         @param quest_ip The Quest's address for adb over Wi-Fi, or None for USB.
-        @param open_quest, open_camera, adb_devices, sys_net The real ones by default; tests pass fakes.
+        @param open_quest, open_camera, adb_devices, headset_state, run, sys_net The real ones by default; tests pass
+            fakes.
         """
         self._station = station
         self._sim = sim
@@ -198,7 +210,10 @@ class DeviceSet:
         self._open_quest = open_quest
         self._open_camera = open_camera
         self._adb_devices = adb_devices
+        self._headset_state = headset_state
+        self._run = run
         self._sys_net = sys_net
+        self._quest_lock = threading.Lock()  # opening or restarting the Quest: the waiting loop, or a page's fix
         self.headset: Any = None
         self.cameras: dict[str, Any] = {}
         self._quest_error: str | None = "not checked yet"
@@ -209,16 +224,19 @@ class DeviceSet:
 
         It can take a few seconds (a camera waits up to two for its first frame), so call it outside the control loop.
         """
-        if self.headset is None:
-            problem = None if self._quest_ip else quest_problem(self._adb_devices())
-            if problem is None:
-                try:
-                    self.headset = self._open_quest(self._quest_ip)
-                except SystemExit as error:  # oculus_reader exits when it finds no headset
-                    problem = f"could not start the Quest's app (exit {error.code}): replug the headset and wake it"
-                except Exception as error:  # noqa: BLE001 - shown on the page, and tried again
-                    problem = str(error) or type(error).__name__
-            self._quest_error = problem
+        with self._quest_lock:
+            if self.headset is None:
+                problem = None if self._quest_ip else quest_problem(self._adb_devices())
+                if problem is None:
+                    try:
+                        self.headset = self._open_quest(self._quest_ip)
+                    except SystemExit as error:  # oculus_reader exits when it finds no headset
+                        problem = (
+                            f"could not start the Quest's app (exit {error.code}): replug the headset and wake it"
+                        )
+                    except Exception as error:  # noqa: BLE001 - shown on the page, and tried again
+                        problem = str(error) or type(error).__name__
+                self._quest_error = problem
         if self._sim:
             return
         for cfg in self._station.cameras:
@@ -235,7 +253,7 @@ class DeviceSet:
 
     def statuses(self) -> list[Status]:
         """Every device's state now; opens nothing, so it can run every second, during a session too."""
-        found = [Status("Quest", self._quest_status())]
+        found = [self._quest_status()]
         if self._sim:
             return found
         for cfg in self._station.cameras:
@@ -262,15 +280,67 @@ class DeviceSet:
         if self.headset is not None:
             self.headset.close()
 
-    def _quest_status(self) -> str | None:
+    def apply_fix(self, fix: str) -> tuple[bool, str]:
+        """Runs a fix the dashboard offers (Status.fix), from the page's thread; see the module's list.
+
+        @return Whether it worked, and what happened, in words for the page and the terminal.
+        """
+        if fix == QUEST_RESTART_FIX:
+            with self._quest_lock:
+                if self.headset is None:
+                    return False, "the Quest is not open yet: nothing to restart"
+                try:
+                    self.headset.reconnect()
+                except SystemExit as error:  # oculus_reader exits when it cannot reach the headset
+                    return (
+                        False,
+                        f"could not restart the Quest app (exit {error.code}): replug the headset and wake it",
+                    )
+                except Exception as error:  # noqa: BLE001 - shown on the page
+                    return False, f"could not restart the Quest app: {error}"
+            return True, "restarted the Quest app: put the headset on and hold the controllers in view"
+        if fix == ADB_RESTART_FIX:
+            with self._quest_lock:
+                if self.headset is not None:
+                    return False, "the Quest is open: restarting adb would cut it off (use Restart the Quest app)"
+                try:
+                    for step in ("kill-server", "start-server"):
+                        self._run(["adb", step], capture_output=True, text=True, timeout=20)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    return False, f"could not restart adb: {error}"
+            return True, 'restarted adb: if the headset shows "Allow USB debugging", accept it (tick Always allow)'
+        return apply_fix(self._station, fix, self._sys_net, self._run)
+
+    def _quest_status(self) -> Status:
         if self.headset is None:
-            return self._quest_error
+            adb_says = None if self._quest_ip else quest.usb_devices(self._adb_devices())
+            can_restart_adb = bool(adb_says) and all(state != "device" for _, state in adb_says)
+            return Status(
+                "Quest",
+                self._quest_error,
+                fix=ADB_RESTART_FIX if can_restart_adb else None,
+                fix_label="Restart adb" if can_restart_adb else "",
+            )
         if not self._quest_ip:
             problem = quest_problem(self._adb_devices())
             if problem is not None:
-                return f"{problem}; then restart dhk-collect (Ctrl+C, and run it again)"
+                return Status("Quest", f"{problem}; then restart dhk-collect (Ctrl+C, and run it again)")
         age_s = self.headset.data_age_s()
-        if age_s > QUEST_LOST_AFTER_S:
-            waited = "no controller data yet" if age_s == float("inf") else f"no controller data for {age_s:.0f} s"
-            return f"{waited}: put the headset on (it sleeps when taken off) and hold the controllers in view"
-        return None
+        if age_s <= QUEST_LOST_AFTER_S:
+            return Status("Quest")
+        waited = "no controller data yet" if age_s == float("inf") else f"no controller data for {age_s:.0f} s"
+        awake, front = self._headset_state(self._quest_ip)
+        if awake is False:
+            problem = (
+                f"{waited}: the headset is asleep; put it on (it wakes when worn) and hold the controllers in view"
+            )
+        elif front and front != quest.APP:
+            problem = (
+                f"{waited}: the teleop app is not in front (the headset shows {front}): press Restart the Quest app, "
+                "then put the headset on"
+            )
+        else:
+            problem = (
+                f"{waited}: press Restart the Quest app, then put the headset on and hold the controllers in view"
+            )
+        return Status("Quest", problem, fix=QUEST_RESTART_FIX, fix_label="Restart the Quest app")

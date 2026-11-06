@@ -14,6 +14,7 @@ Buttons, as the collector uses them:
 """
 
 import dataclasses
+import re
 import subprocess
 import time
 from typing import Any
@@ -29,6 +30,9 @@ _GRIP_KEY = {"right": "rightGrip", "left": "leftGrip"}
 _TRIGGER_KEY = {"right": "rightTrig", "left": "leftTrig"}
 ## The buttons the collector reacts to.
 BUTTONS = ("A", "B", "RJ")
+## The teleop app oculus_reader installs on the headset, and the port adb uses over Wi-Fi.
+APP = "com.rail.oculus.teleop"
+ADB_PORT = 5555
 ## What `adb devices` says of a headset that is plugged in but adb cannot use, and what to do about it.
 ADB_PROBLEMS = {
     "no permissions": (
@@ -75,6 +79,7 @@ class Quest:
             problem = adb_problem(adb_devices())
             if problem is not None:
                 raise QuestError(f"the Quest is plugged in but adb cannot use it: {problem}")
+        self._ip_address = ip_address
         self._reader = OculusReader(ip_address=ip_address)
         self._last_transforms: Any = None
         self._last_change_s = 0.0
@@ -95,6 +100,23 @@ class Quest:
     def data_age_s(self) -> float:
         """Seconds since read() last saw new controller data; infinite before the first. Safe from another thread."""
         return time.monotonic() - self._last_change_s if self._ever_changed else float("inf")
+
+    def reconnect(self) -> None:
+        """Restarts the teleop app on the headset, in front, and reads it on a new adb log stream.
+
+        For a headset whose data stopped: the app went behind another one (Quest Home), or the log stream was cut
+        when the headset slept or its cable came out. It takes a few seconds; read() goes on meanwhile, without data.
+
+        @throws SystemExit, Exception From oculus_reader, when it cannot reach the headset.
+        """
+        from oculus_reader.reader import OculusReader
+
+        old = self._reader
+        old.running = False  # its log thread ends at its next line, at once when its stream is gone
+        adb_shell(f"am force-stop {APP}", self._ip_address)
+        self._reader = OculusReader(ip_address=self._ip_address)  # starts the app in front, and a new stream
+        self._last_transforms, self._last_change_s, self._ever_changed = None, 0.0, False
+        old.stop()
 
     def close(self) -> None:
         self._reader.stop()
@@ -124,6 +146,33 @@ def usb_devices(adb_devices_output: str) -> list[tuple[str, str]]:
         if tab and serial.count(".") < 3:
             found.append((serial, state.strip()))
     return found
+
+
+def adb_shell(command: str, ip_address: str | None = None, timeout_s: float = 10.0) -> str:
+    """Runs a shell command on the headset over adb, returning its output; nothing when adb does not answer."""
+    target = ["-s", f"{ip_address}:{ADB_PORT}"] if ip_address else []
+    try:
+        result = subprocess.run(["adb", *target, "shell", command], capture_output=True, text=True, timeout=timeout_s)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout
+
+
+def headset_state(ip_address: str | None = None) -> tuple[bool | None, str | None]:
+    """Whether the headset is awake, and the app in front (a package name); None for what adb cannot tell."""
+    return parse_headset_state(
+        adb_shell(
+            "dumpsys power | grep -m1 'mWakefulness='; dumpsys activity activities | grep -m1 'mFocusedApp=Activity'",
+            ip_address,
+        )
+    )
+
+
+def parse_headset_state(output: str) -> tuple[bool | None, str | None]:
+    """headset_state() from its adb output: `mWakefulness=Awake`, `mFocusedApp=ActivityRecord{... <package>/...}`."""
+    wake = re.search(r"mWakefulness=(\w+)", output)
+    front = re.search(r"mFocusedApp=ActivityRecord\{\S+ \S+ ([\w.]+)/", output)
+    return (wake.group(1) == "Awake" if wake else None), (front.group(1) if front else None)
 
 
 def adb_devices() -> str:

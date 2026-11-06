@@ -10,8 +10,9 @@ ssh -L 8080:localhost:8080 <user>@<station>
 The page shows the three cameras as they are recorded, every device's state with the fix for one that is not ready
 (the Quest, each camera, each arm's link), what the session is waiting for, whether an episode is recording, each
 arm's clutch and tool position, warnings, the session's events, and the dataset's episodes with their videos to play
-back. Its one action is a device's fix, which only `dhk-collect` offers: a button that brings a CAN link up when it
-is down (devices.apply_fix()). Nothing on it drives the arms or changes the dataset. A fix is taken only from the
+back. Its only actions are devices' fixes, which only `dhk-collect` offers (devices.DeviceSet.apply_fix()): a button that
+brings a CAN link up when it is down, one that restarts the Quest's app when its data stops, and one that restarts adb
+before the Quest is open. Nothing on it drives the arms or changes the dataset. A fix is taken only from the
 page itself (a custom header, and an `Origin` that matches the page's address), so no other website open in the
 same browser can send one through the SSH tunnel. `scripts/check_cameras.py` serves the same page with the
 cameras alone.

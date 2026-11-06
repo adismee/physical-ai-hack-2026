@@ -72,6 +72,11 @@ class FakeHeadset:
         self.age_s = 0.0
         self.press: set[str] = set()
         self.closed = False
+        self.reconnects = 0
+
+    def reconnect(self) -> None:
+        self.reconnects += 1
+        self.age_s = float("inf")
 
     def data_age_s(self) -> float:
         return self.age_s
@@ -108,13 +113,21 @@ class Station:
         self.adb = ADB_HEADER + "1WMHH0000000AB\tdevice\n"
         self.broken_cameras: set[str] = set()
         self.headset = FakeHeadset()
+        self.headset_state: tuple[bool | None, str | None] = (True, quest.APP)
+        self.commands: list[list[str]] = []
         self.found = devices.DeviceSet(
             self.config,
             open_quest=lambda ip: self.headset,
             open_camera=self._open_camera,
             adb_devices=lambda: self.adb,
+            headset_state=lambda ip: self.headset_state,
+            run=self._run,
             sys_net=self.sys_net,
         )
+
+    def _run(self, command, **kwargs):
+        self.commands.append(command)
+        return __import__("subprocess").CompletedProcess(command, 0, "", "")
 
     def _open_camera(self, cfg: config.CameraConfig, width: int, height: int) -> FakeCamera:
         if cfg.role in self.broken_cameras:
@@ -404,3 +417,86 @@ def test_a_station_without_the_sudo_rule_gets_the_command_to_type(tmp_path):
         ok, message = devices.apply_fix(station.config, "can-up:can_follower_l", station.sys_net, run)
         assert not ok and "sudo ip link set can_follower_l up type can bitrate 1000000" in message
         assert "allow_can_bringup.sh" in message
+
+
+# --- the Quest's fixes
+
+
+def test_a_silent_quest_says_why_and_offers_a_restart(tmp_path):
+    station = Station(tmp_path)
+    station.found.try_open()
+    station.headset.age_s = 20.0
+    station.headset_state = (True, "com.oculus.vrshell")
+    quest_status = station.found.statuses()[0]
+    assert "the teleop app is not in front (the headset shows com.oculus.vrshell)" in quest_status.problem
+    assert (quest_status.fix, quest_status.fix_label) == ("quest-restart", "Restart the Quest app")
+    station.headset_state = (False, "com.oculus.vrshell")
+    assert "the headset is asleep" in station.found.statuses()[0].problem
+    station.headset.age_s = 0.1
+    assert station.found.statuses()[0] == devices.Status("Quest")  # sending again: no problem, no button
+
+
+def test_restarting_the_quest_app_reconnects_the_open_headset(tmp_path):
+    station = Station(tmp_path)
+    assert station.found.apply_fix("quest-restart") == (False, "the Quest is not open yet: nothing to restart")
+    station.found.try_open()
+    ok, message = station.found.apply_fix("quest-restart")
+    assert ok and "restarted the Quest app" in message and station.headset.reconnects == 1
+
+
+def test_restart_adb_is_offered_only_before_the_quest_is_open(tmp_path):
+    station = Station(tmp_path)
+    station.adb = ADB_HEADER + "1WMHH0000000AB\tunauthorized\n"
+    station.found.try_open()
+    quest_status = station.found.statuses()[0]
+    assert (quest_status.fix, quest_status.fix_label) == ("adb-restart", "Restart adb")
+    ok, message = station.found.apply_fix("adb-restart")
+    assert ok and "Allow USB debugging" in message
+    assert station.commands == [["adb", "kill-server"], ["adb", "start-server"]]
+    station.adb = ADB_HEADER + "1WMHH0000000AB\tdevice\n"
+    station.found.try_open()
+    assert not station.found.apply_fix("adb-restart")[0]  # open now: restarting adb would cut it off
+    assert len(station.commands) == 2
+
+
+def test_a_problem_whose_numbers_change_is_logged_once():
+    reported, logs = {}, []
+    for seconds in (15, 16, 17):
+        collect._report(
+            [devices.Status("Quest", f"no controller data for {seconds} s: wake it")], reported, logs.append
+        )
+    assert logs == ["Quest: no controller data for 15 s: wake it"]
+    collect._report([devices.Status("Quest", "no controller data for 18 s: asleep")], reported, logs.append)
+    assert len(logs) == 2  # the words changed: a new problem
+
+
+class FakeOculusReader:
+    """oculus_reader's reader, counting how many were made and stopped."""
+
+    made: list["FakeOculusReader"] = []
+
+    def __init__(self, ip_address=None) -> None:
+        self.running, self.stopped = True, False
+        FakeOculusReader.made.append(self)
+
+    def get_transformations_and_buttons(self):
+        return {}, {}
+
+    def stop(self) -> None:
+        self.running, self.stopped = False, True
+
+
+def test_reconnect_restarts_the_app_on_a_new_reader(monkeypatch):
+    monkeypatch.setitem(
+        __import__("sys").modules, "oculus_reader.reader", type("m", (), {"OculusReader": FakeOculusReader})
+    )
+    monkeypatch.setattr(quest, "adb_devices", lambda: ADB_HEADER + "1WMHH0000000AB\tdevice\n")
+    shell = []
+    monkeypatch.setattr(quest, "adb_shell", lambda command, ip=None: shell.append(command) or "")
+    FakeOculusReader.made.clear()
+    headset = quest.Quest()
+    first = FakeOculusReader.made[0]
+    headset.reconnect()
+    assert len(FakeOculusReader.made) == 2 and first.stopped and not FakeOculusReader.made[1].stopped
+    assert shell == [f"am force-stop {quest.APP}"]
+    assert headset.data_age_s() == float("inf")  # no data from the new reader yet

@@ -32,6 +32,7 @@ import argparse
 import dataclasses
 import os
 import pathlib
+import re
 import signal
 import socket
 import sys
@@ -375,7 +376,7 @@ def _run_locked(
             board.event(line)
 
     def fix(fix_id: str) -> tuple[bool, str]:
-        ok, message = devices.apply_fix(station, fix_id)
+        ok, message = found.apply_fix(fix_id)
         log(f"dashboard: {message}")
         return ok, message
 
@@ -523,15 +524,26 @@ class _Monitor:
 
 
 def _report(statuses: list[devices.Status], reported: dict[str, str | None], log: Callable[[str], None]) -> None:
-    """Logs each device whose state changed since the last report: its problem, or that it is ready again."""
+    """Logs each device whose state changed since the last report: its problem, or that it is ready again.
+
+    A problem whose words stay the same but whose numbers change (`no controller data for 15 s`, then 16 s) is the
+    same problem: it is logged once, not every second.
+    """
     for status in statuses:
-        if status.name in reported and reported[status.name] == status.problem:
+        if status.name in reported and _same(reported[status.name], status.problem):
             continue
         if status.problem is not None:
             log(f"{status.name}: {status.problem}")
         elif reported.get(status.name) is not None or status.name not in reported:
             log(f"{status.name}: ready")
         reported[status.name] = status.problem
+
+
+def _same(problem: str | None, other: str | None) -> bool:
+    """Whether two problems are the same but for their numbers (seconds waited, frame counts)."""
+    if problem is None or other is None:
+        return problem is other
+    return re.sub(r"\d+(\.\d+)?", "#", problem) == re.sub(r"\d+(\.\d+)?", "#", other)
 
 
 def _open_dashboard(

@@ -82,7 +82,7 @@ cd ~/physical-ai-hacks
 
 While `dhk-collect` runs, open http://localhost:8080 in your laptop's browser. The dashboard shows:
 
-- Every device: the Quest, the three cameras and both arms' links. A red one says what is wrong and what to do: a camera unplugged (it comes back by itself once plugged in again), the headset asleep or not connected, a CAN link down after a reboot, with a button that brings it up (it never takes a link down).
+- Every device: the Quest, the three cameras and both arms' links. A red one says what is wrong and what to do: a camera unplugged (it comes back by itself once plugged in again), the headset asleep or not connected, a CAN link down after a reboot. Some have a button that fixes them: "Bring ... up" for a CAN link that is down (it never takes a link down), "Restart the Quest app" when the controllers' data stops (the app went behind Quest Home, or the headset slept), and "Restart adb" when the headset is `unauthorized` (its prompt shows again).
 - At the start, what the session is waiting for, then "press A on the right controller to open the arms" once every device is ready.
 - The three cameras, cropped and sized as they are recorded.
 - Whether an episode is recording, and for how long.
