@@ -20,7 +20,10 @@ from dream_hackathon import arms, config, station_lock
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--config", required=True)
-    station = config.load(parser.parse_args().config)
+    try:
+        station = config.load(parser.parse_args().config)
+    except config.ConfigError as error:
+        raise SystemExit(f"config: {error}") from None
     try:
         lock = station_lock.acquire("scripts/check_arms.py")
     except station_lock.StationBusyError as error:

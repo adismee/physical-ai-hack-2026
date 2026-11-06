@@ -154,7 +154,13 @@ def load(path: str | pathlib.Path) -> StationConfig:
     @return The config.
     @throws ConfigError A value is missing or wrong; the message names the key.
     """
-    raw = yaml.safe_load(pathlib.Path(path).read_text())
+    file = pathlib.Path(path)
+    if not file.is_file():
+        raise ConfigError(
+            f"{path} does not exist: copy your arm's template (configs/yam.yaml, metal.yaml or maker.yaml) to it "
+            "and fill it in (docs/hardware_setup.md)"
+        )
+    raw = yaml.safe_load(file.read_text())
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: expected a YAML mapping at the top level")
     placeholder = _placeholder(raw)

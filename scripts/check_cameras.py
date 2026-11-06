@@ -71,7 +71,11 @@ def main() -> None:
     if args.list or not args.config:
         list_cameras()
         return
-    preview(config.load(args.config), args.port)
+    try:
+        station = config.load(args.config)
+    except config.ConfigError as error:
+        raise SystemExit(f"config: {error}") from None
+    preview(station, args.port)
 
 
 if __name__ == "__main__":

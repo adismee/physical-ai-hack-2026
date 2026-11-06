@@ -48,3 +48,8 @@ def test_mistakes_name_the_key(tmp_path: pathlib.Path, change, message: str) -> 
     path.write_text(yaml.safe_dump(raw))
     with pytest.raises(config.ConfigError, match=message):
         config.load(path)
+
+
+def test_a_missing_file_says_how_to_make_it(tmp_path):
+    with pytest.raises(config.ConfigError, match="does not exist: copy your arm's template"):
+        config.load(tmp_path / "station.yaml")
