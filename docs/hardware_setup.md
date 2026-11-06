@@ -10,7 +10,9 @@ You need Ubuntu 26.04 LTS on an x86-64 computer (the version the stations run an
 
 ```bash
 sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-headers-$(uname -r)
-sudo usermod -aG video $USER                     # lets SSH sessions open the cameras (from your next login)
+sudo usermod -aG video,plugdev $USER             # lets SSH sessions open the cameras (from your next login)
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2833", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/90-quest-adb.rules
+sudo udevadm control --reload-rules              # the rule above lets SSH sessions use the Quest over adb
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv brings its own Python 3.13 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
@@ -18,7 +20,7 @@ git clone https://github.com/koustubh1012/physical-ai-hacks.git
 cd physical-ai-hacks
 ```
 
-Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Log out and back in once (over SSH, reconnect) so the `video` group applies: without it, nothing started over SSH can open a camera, because Ubuntu gives the cameras only to whoever is logged in at the station's own screen. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
+Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Log out and back in once (over SSH, reconnect) so the `video` group applies: without it, nothing started over SSH can open a camera, because Ubuntu gives the cameras only to whoever is logged in at the station's own screen. The Quest's udev rule does the same for the headset, through the `plugdev` group. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
 
 Install the dependencies for your arm type. A station installs one arm type, never both:
 
@@ -102,7 +104,7 @@ With no screen on the station, this serves the three views to a browser: on your
 ## 4. The Quest
 
 1. Turn on Developer Mode for the headset in the Meta Horizon phone app (the headset's settings, then Developer Mode).
-2. Plug the headset into the computer with a USB-C cable, put it on, and accept "Allow USB debugging". `adb devices` should list it.
+2. Plug the headset into the computer with a USB-C cable, put it on, and accept "Allow USB debugging". `adb devices` should list it as `device`. `unauthorized` means the prompt is still waiting in the headset; `no permissions` means the Quest's udev rule from step 1 is missing (add it, then `adb kill-server` and replug).
 3. Run `uv run python scripts/check_quest.py`. The first run installs the teleop app on the headset. With the headset on, move the controllers: their positions, grips and triggers print. Press A, B and the right joystick to see them listed.
 
 To work without the cable, run `adb tcpip 5555` while plugged in, unplug, and pass the headset's address: `--ip 192.168.x.y` (`--quest-ip` for `dhk-collect`).

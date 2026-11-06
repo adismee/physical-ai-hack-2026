@@ -9,6 +9,7 @@ The first run installs the Quest app on the headset (accept the USB debugging pr
 """
 
 import argparse
+import sys
 import time
 
 from dream_hackathon import quest
@@ -17,7 +18,10 @@ from dream_hackathon import quest
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--ip", help="the Quest's address for adb over Wi-Fi (default: USB)")
-    headset = quest.Quest(parser.parse_args().ip)
+    try:
+        headset = quest.Quest(parser.parse_args().ip)
+    except quest.QuestError as error:
+        sys.exit(str(error))
     try:
         while True:
             state = headset.read()

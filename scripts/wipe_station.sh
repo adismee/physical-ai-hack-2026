@@ -40,7 +40,7 @@ home_paths=(
   "$HOME/.android"
   "$HOME/.git-credentials"
 )
-system_files=(/etc/udev/rules.d/90-dreamlabs-can.rules /etc/udev/rules.d/90-can.rules)
+system_files=(/etc/udev/rules.d/90-dreamlabs-can.rules /etc/udev/rules.d/90-can.rules /etc/udev/rules.d/90-quest-adb.rules)
 apt_packages=(build-essential python3-dev curl adb tmux git-lfs python3-pip)
 profiles=("$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.zshenv")
 uv_line='. "$HOME/.local/bin/env"'

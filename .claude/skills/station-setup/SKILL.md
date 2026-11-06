@@ -17,7 +17,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 1. The computer
 
-1. Check the tools: `git lfs version`, `uv --version`, `adb version`, `tmux -V`. If `uv` is not found right after installing it, `source $HOME/.local/bin/env` puts it on the PATH (never the snap). Check that the account is in the `video` group (`id -nG`): without it, nothing started over SSH can open a camera, the setup wizard's included. For anything missing, give the organizer the install line from `docs/hardware_setup.md` (step 1) to run; it needs `sudo`.
+1. Check the tools: `git lfs version`, `uv --version`, `adb version`, `tmux -V`. If `uv` is not found right after installing it, `source $HOME/.local/bin/env` puts it on the PATH (never the snap). Check that the account is in the `video` and `plugdev` groups (`id -nG`) and that `/etc/udev/rules.d/90-quest-adb.rules` exists: without them, nothing started over SSH can open a camera (the setup wizard's included) or the Quest. For anything missing, give the organizer the install line from `docs/hardware_setup.md` (step 1) to run; it needs `sudo`.
 2. Install the station's environment: `uv sync --extra yam` or `uv sync --extra makermods`, plus `--extra realsense` if needed. If the Quest app fails to install from git LFS, check that `git lfs install` was run.
 3. Run the hardware-free tests of the teleop and the configs in the station's environment: `uv run pytest tests/test_teleop.py tests/test_ik.py tests/test_config.py`. The dataset checks run later, in `~/dream-env` (step 7): the Dream library's checks need a newer PyAV than a MakerMods station's environment has.
 
@@ -46,7 +46,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 5. Device checks
 
-1. Quest: the organizer turns on Developer Mode, plugs in the headset and accepts USB debugging. Then you run `uv run python scripts/check_quest.py` while they move the controllers and press A, B and the right joystick. Every control should show up, on the right side.
+1. Quest: the organizer turns on Developer Mode, plugs in the headset and accepts USB debugging. `adb devices` must list the headset as `device`: `unauthorized` means the prompt is still waiting in the headset, `no permissions` that the Quest's udev rule is missing (`check_quest.py` says which). Then you run `uv run python scripts/check_quest.py` while they move the controllers and press A, B and the right joystick. Every control should show up, on the right side.
 2. Cameras: `uv run python scripts/check_cameras.py --config configs/station.yaml` serves the three views on the station's port 8080. The organizer opens them from a laptop (`ssh -L 8080:localhost:8080 <user>@<station>`, then http://localhost:8080), checks that each view is correct, then fixes the cameras in place. Stop it with Ctrl+C.
 3. Arms: ask first (rule 2), and have the organizer support MakerMods arms. Then run `uv run python scripts/check_arms.py --config configs/station.yaml` while they move each arm by hand; the matching side's numbers should change. Stop it with Ctrl+C.
 

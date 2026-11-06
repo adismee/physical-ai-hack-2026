@@ -14,6 +14,7 @@ Buttons, as the collector uses them:
 """
 
 import dataclasses
+import subprocess
 import time
 from typing import Any
 
@@ -28,6 +29,19 @@ _GRIP_KEY = {"right": "rightGrip", "left": "leftGrip"}
 _TRIGGER_KEY = {"right": "rightTrig", "left": "leftTrig"}
 ## The buttons the collector reacts to.
 BUTTONS = ("A", "B", "RJ")
+## What `adb devices` says of a headset that is plugged in but adb cannot use, and what to do about it.
+ADB_PROBLEMS = {
+    "no permissions": (
+        "this account cannot open the headset's USB device (over SSH, Ubuntu gives it only to whoever is logged in at "
+        "the station's screen): add the Quest's udev rule from docs/hardware_setup.md, step 1, then run "
+        "`adb kill-server` and replug the headset"
+    ),
+    "unauthorized": 'put the headset on and accept "Allow USB debugging" (tick "Always allow from this computer")',
+}
+
+
+class QuestError(RuntimeError):
+    """The headset is plugged in but cannot be used yet; the message says why and what to do."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,6 +71,10 @@ class Quest:
         """
         from oculus_reader.reader import OculusReader
 
+        if ip_address is None:
+            problem = adb_problem(_adb_devices())
+            if problem is not None:
+                raise QuestError(f"the Quest is plugged in but adb cannot use it: {problem}")
         self._reader = OculusReader(ip_address=ip_address)
         self._last_transforms: Any = None
         self._last_change_s = 0.0
@@ -74,6 +92,34 @@ class Quest:
 
     def close(self) -> None:
         self._reader.stop()
+
+
+def adb_problem(adb_devices_output: str) -> str | None:
+    """Why adb cannot use the headset on USB, from what `adb devices` prints, or None.
+
+    None when a USB device is ready, or when none is listed at all (oculus_reader then says it found none). Devices
+    on Wi-Fi (listed as an address and port) are not looked at.
+    """
+    states = []
+    for line in adb_devices_output.splitlines():
+        serial, tab, state = line.partition("\t")
+        if tab and serial.count(".") < 3:
+            states.append(state.strip())
+    if "device" in states:
+        return None
+    for state in states:
+        for start, advice in ADB_PROBLEMS.items():
+            if state.startswith(start):
+                return advice
+    return None
+
+
+def _adb_devices() -> str:
+    """What `adb devices` prints, or nothing when adb is not installed or does not answer."""
+    try:
+        return subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def parse(transforms: dict[str, Any], buttons: dict[str, Any], held: set[str]) -> QuestState:
