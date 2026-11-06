@@ -77,6 +77,9 @@ LOG_PATH = pathlib.Path("~/.cache/dream_hackathon/collect.log").expanduser()
 ## the participant, since Dream's service labels every dataset from its head camera, but the LeRobot v2.1 files
 ## (and Dream's checks of them) need one non-empty text per episode.
 DEFAULT_TASK = "do the demonstrated task"
+## Dream's limits on a task text: its length, and no control characters (it must be one line).
+TASK_MAX_CHARS = 512
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 
 ## How often the devices are checked, while waiting for them and during a session.
 CHECK_EVERY_S = 1.0
@@ -88,6 +91,58 @@ A_AFTER_READY_S = 1.0
 
 ## Frames by camera role, at the recording size.
 FrameSource = Callable[[], dict[str, npt.NDArray[np.uint8]]]
+
+
+class SessionControls:
+    """What the dashboard can change in a session: the task text new episodes record, and the dataset's episodes.
+
+    Shared by the control loop and the dashboard's threads. The dataset is guarded by `lock`: the collector holds it
+    while an episode records, and a delete takes it without waiting, so a delete is refused while an episode records
+    and no episode starts while a delete runs. A delete renumbers the later episodes (Dream wants 0, 1, 2, ...) and
+    reloads the writer from the folder, so the next episode is numbered right.
+
+    Attributes:
+    - task: The task text the next episode records.
+    - writer: The dataset's writer.
+    - lock: Held while an episode records, or while episodes are deleted.
+    """
+
+    def __init__(self, make_writer: Callable[[], dataset.DatasetWriter], task: str) -> None:
+        """@param make_writer Opens the dataset's writer; called again after a delete, to reload it."""
+        self._make_writer = make_writer
+        self.writer = make_writer()
+        self.task = task
+        self.lock = threading.Lock()
+
+    def set_task(self, text: str) -> tuple[bool, str]:
+        """Sets the task text the next episode records; an empty text goes back to DEFAULT_TASK."""
+        text = (text or "").strip()
+        if not text:
+            self.task = DEFAULT_TASK
+            return True, f"task cleared: new episodes record {DEFAULT_TASK!r}"
+        if len(text) > TASK_MAX_CHARS:
+            return False, f"the task is {len(text)} characters; Dream takes up to {TASK_MAX_CHARS}"
+        if _CONTROL_CHARACTER.search(text):
+            return False, "the task must be one line of plain text"
+        self.task = text
+        return True, f"task set: new episodes record {text!r}"
+
+    def delete(self, indices: list[int]) -> tuple[bool, str]:
+        """Deletes episodes by number, renumbering the later ones; refused while an episode records."""
+        chosen = sorted(set(indices))
+        if not chosen:
+            return False, "no episodes chosen"
+        if not self.lock.acquire(blocking=False):
+            return False, "an episode is recording: save it (A) or discard it (B) first"
+        try:
+            left = dataset.drop_episodes(self.writer.root, set(chosen))
+            self.writer = self._make_writer()
+        except dataset.DatasetError as error:
+            return False, f"nothing deleted: {error}"
+        finally:
+            self.lock.release()
+        names = ", ".join(str(index) for index in chosen)
+        return True, f"deleted episode{'s' if len(chosen) > 1 else ''} {names}; {left} left, the later ones renumbered"
 
 
 @dataclasses.dataclass
@@ -116,6 +171,7 @@ class Collector:
         iks: dict[str, ik.ArmIK],
         writer: dataset.DatasetWriter,
         log: Callable[[str], None] = print,
+        controls: SessionControls | None = None,
     ) -> None:
         """Holds the devices; the command starts where the arms are.
 
@@ -127,14 +183,14 @@ class Collector:
         @param iks Per side, the teleop IK.
         @param writer The dataset episodes are saved to.
         @param log Where events are reported.
+        @param controls The task and dataset the dashboard can change; None keeps `task` and `writer` as they are.
         """
         self._station = station
-        self._task = task
+        self._controls = controls or SessionControls(lambda: writer, task)
         self._robot = robot
         self._headset = headset
         self._frames = frames
         self._iks = iks
-        self._writer = writer
         self._log = log
         self._dt_s = 1.0 / station.control_hz
         self._record_every = station.control_hz // station.fps
@@ -204,9 +260,9 @@ class Collector:
             "recording": self.episode is not None,
             "frames": frames,
             "seconds": frames / self._station.fps,
-            "episodes": self._writer.total_episodes,
-            "task": self._task,
-            "dataset": str(self._writer.root),
+            "episodes": self._controls.writer.total_episodes,
+            "task": self._controls.task,
+            "dataset": str(self._controls.writer.root),
             "homing": self.homing,
             "arms": per_arm,
             "warnings": [text for _, text in self._warnings],
@@ -233,8 +289,11 @@ class Collector:
     def discard(self) -> None:
         """Drops the episode being recorded, if any."""
         if self.episode is not None:
-            self.episode.discard()
-            self.episode = None
+            try:
+                self.episode.discard()
+            finally:
+                self.episode = None
+                self._controls.lock.release()
             self._log("episode discarded")
 
     def _handle_buttons(self, pressed: frozenset[str]) -> None:
@@ -251,12 +310,21 @@ class Collector:
                     clutch.engaged = False
 
     def _toggle_recording(self) -> None:
+        controls = self._controls
         if self.episode is None:
             if not self._robot.energized:
                 self._log("a dry run does not record")
                 return
-            self.episode = self._writer.start_episode(self._task)
-            self._log(f"recording episode {self._writer.total_episodes}: {self._task!r}")
+            # Held until the episode is saved or discarded, so the dashboard cannot delete episodes under it.
+            if not controls.lock.acquire(blocking=False):
+                self._log("episodes are being deleted from the dashboard: press A again in a moment")
+                return
+            try:
+                self.episode = controls.writer.start_episode(controls.task)
+            except BaseException:
+                controls.lock.release()
+                raise
+            self._log(f"recording episode {controls.writer.total_episodes}: {controls.task!r}")
             return
         episode, self.episode = self.episode, None
         try:
@@ -264,7 +332,9 @@ class Collector:
         except dataset.DatasetError as error:
             self._log(f"not saved: {error}")
             return
-        self._log(f"saved episode {index} ({episode.frames} frames); {self._writer.total_episodes} in the dataset")
+        finally:
+            controls.lock.release()
+        self._log(f"saved episode {index} ({episode.frames} frames); {controls.writer.total_episodes} in the dataset")
 
     def _follow(self, state: "quest.QuestState", measured: arms.Joints) -> None:
         """Moves each arm's command toward its clutch's target; a released clutch holds it.
@@ -322,19 +392,23 @@ def run(
     @throws StationBusyError Another program (a collector, a check, `dreamcli`) holds the station's arms.
     """
     iks = arms.open_ik(station)  # first: a missing tool center point stops here, before any device opens
-    writer = dataset.DatasetWriter(
-        station.dataset_dir,
-        station.fps,
-        station.arm,
-        _state_names(station),
-        list(layouts.video_keys(station.family).values()),
-        station.record_width,
-        station.record_height,
-    )
+
+    def make_writer() -> dataset.DatasetWriter:
+        return dataset.DatasetWriter(
+            station.dataset_dir,
+            station.fps,
+            station.arm,
+            _state_names(station),
+            list(layouts.video_keys(station.family).values()),
+            station.record_width,
+            station.record_height,
+        )
+
+    controls = SessionControls(make_writer, task)
     # A simulated YAM drives no hardware, so it takes no lock.
     lock = None if sim else station_lock.acquire("dhk-collect", station.dataset_dir.resolve())
     try:
-        _run_locked(station, task, iks, writer, dry_run=dry_run, sim=sim, quest_ip=quest_ip, port=dashboard_port)
+        _run_locked(station, controls, iks, dry_run=dry_run, sim=sim, quest_ip=quest_ip, port=dashboard_port)
     finally:
         if lock is not None:
             lock.close()
@@ -342,9 +416,8 @@ def run(
 
 def _run_locked(
     station: config.StationConfig,
-    task: str,
+    controls: SessionControls,
     iks: dict[str, ik.ArmIK],
-    writer: dataset.DatasetWriter,
     *,
     dry_run: bool,
     sim: bool,
@@ -383,7 +456,19 @@ def _run_locked(
         log(f"dashboard: {message}")
         return ok, message
 
-    board = _open_dashboard(station, frame, port, on_fix=fix)
+    def set_task(text: str) -> tuple[bool, str]:
+        ok, message = controls.set_task(text)
+        log(f"dashboard: {message}")
+        return ok, message
+
+    def delete(indices: list[int]) -> tuple[bool, str]:
+        ok, message = controls.delete(indices)
+        log(f"dashboard: {message}")
+        return ok, message
+
+    board = _open_dashboard(
+        station, frame, port, on_fix=fix, on_task=set_task, on_delete=delete, task_of=lambda: controls.task
+    )
 
     monitor = None
     try:
@@ -396,7 +481,9 @@ def _run_locked(
         monitor = _Monitor(found, board, log, reported)
         collector = None
         try:
-            collector = Collector(station, task, robot, found.headset, frames, iks, writer, log=log)
+            collector = Collector(
+                station, controls.task, robot, found.headset, frames, iks, controls.writer, log=log, controls=controls
+            )
             _loop(collector, 1.0 / station.control_hz, board)
         finally:
             # From here the shutdown runs to its end: a hang-up, a kill or another Ctrl+C would leave the arms
@@ -559,6 +646,9 @@ def _open_dashboard(
     frame: Callable[[str], npt.NDArray[np.uint8]],
     port: int,
     on_fix: Callable[[str], tuple[bool, str]] | None = None,
+    on_task: Callable[[str], tuple[bool, str]] | None = None,
+    on_delete: Callable[[list[int]], tuple[bool, str]] | None = None,
+    task_of: Callable[[], str] | None = None,
 ) -> dashboard.Dashboard | None:
     """Starts the dashboard and says how to open it; a taken port leaves the session without one."""
     if not port:
@@ -571,6 +661,9 @@ def _open_dashboard(
             station.dataset_dir,
             title=f"{socket.gethostname()}: {station.arm} station",
             on_fix=on_fix,
+            on_task=on_task,
+            on_delete=on_delete,
+            task_of=task_of,
         )
     except OSError as error:
         _say(

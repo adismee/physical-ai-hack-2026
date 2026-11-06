@@ -40,7 +40,7 @@ Your station is already set up; this is where you start. You teach the model by 
    uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes
    ```
 
-   No task text or other labels are needed: Dream's service labels every dataset from its overhead camera when it processes it. To name the task yourself anyway, add `--task "put the red cube in the bowl"`.
+   No task text or other labels are needed: Dream's service labels every dataset from its overhead camera when it processes it. To name the task yourself anyway, type it in the dashboard's Session panel and press "Set task" (it applies to the next episodes), or start with `--task "put the red cube in the bowl"`.
 
 5. For each episode: set the scene, press A, do the task, press A again to save it (B throws it away). Press Ctrl+C when you are done.
 
@@ -88,9 +88,10 @@ While `dhk-collect` runs, open http://localhost:8080 in your laptop's browser. T
 - Whether an episode is recording, and for how long.
 - Each arm: driving or holding, its tool position and its gripper.
 - Warnings (a stalled camera, an arm that cannot follow) and the session's events.
-- The episodes saved so far, with each camera's video to play back.
+- The task text the next episodes record, with a box to type a new one ("Set task"). An empty one goes back to the default.
+- The episodes saved so far, with each camera's video to play back, and a checkbox on each: tick the ones you do not want and press "Delete selected" (it asks first, and is refused while an episode is recording).
 
-Tick "sound cues" and the laptop beeps when recording starts (one beep), when an episode is saved (two) or discarded (a low one). That lets a teammate at the laptop follow the operator. The page only watches: nothing on it moves the arms or changes your data.
+Tick "sound cues" and the laptop beeps when recording starts (one beep), when an episode is saved (two) or discarded (a low one). That lets a teammate at the laptop follow the operator. Nothing on the page moves the arms; its buttons fix a device, set the task, or delete the episodes you tick.
 
 If the page does not load:
 
@@ -115,7 +116,7 @@ If the connection drops outside tmux, the session ends safely: the episode being
    uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes
    ```
 
-   You do not need to label the episodes: when Dream processes the dataset, its service writes dense text labels for it from the overhead camera. A task text of your own is optional: `--task "put the red cube in the bowl"` records it with each episode, so write it the way you will ask the robot. Without it, each episode records the neutral text `do the demonstrated task`, since the dataset format needs one.
+   You do not need to label the episodes: when Dream processes the dataset, its service writes dense text labels for it from the overhead camera. A task text of your own is optional: type it on the dashboard ("Set task", from the next episode on) or start with `--task "put the red cube in the bowl"`, and write it the way you will ask the robot. Without it, each episode records the neutral text `do the demonstrated task`, since the dataset format needs one.
 
 4. For each episode: set the scene, press A, do the task, press A to save. If it went wrong, press B instead and do it again.
 5. Press Ctrl+C when you are done. The arms return to where they started.
@@ -133,14 +134,16 @@ Each saved episode is printed with its number. To check the dataset at any point
 
 ## Removing episodes
 
-B throws away the episode you are recording. To remove one you notice later, after watching it on the dashboard, list the episodes and drop it:
+B throws away the episode you are recording. To remove ones you notice later, after watching them on the dashboard, tick their checkboxes in the Episodes panel and press "Delete selected". It asks first, and is refused while an episode is recording: save (A) or discard (B) it first. The episodes after them are renumbered (Dream wants 0, 1, 2, ...), and the next one you record follows on.
+
+Without a running session, `dhk-dataset` does the same from the terminal:
 
 ```bash
 uv run dhk-dataset list ~/hackathon_data/myteam-cubes
 uv run dhk-dataset drop ~/hackathon_data/myteam-cubes 3        # asks first; several numbers drop several
 ```
 
-The episodes after it are renumbered, so check `list` again before dropping another. On a Metal or Maker arm, rebuild the dataset you fine-tune on afterwards with `tools/add_eef.py ... --replace`. Stop `dhk-collect` before dropping episodes from the folder it records into.
+The episodes after it are renumbered, so check `list` again before dropping another. `dhk-dataset` refuses the folder a running `dhk-collect` records into: use the dashboard then. On a Metal or Maker arm, rebuild the dataset you fine-tune on afterwards with `tools/add_eef.py ... --replace`.
 
 ## Where your data is stored
 

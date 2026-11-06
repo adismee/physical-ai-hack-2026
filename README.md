@@ -42,7 +42,7 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
    The episodes need no labels: Dream labels every dataset from its overhead camera. `--task "..."` adds a task text of your own, if you want one.
 
-   While `dhk-collect` runs, open http://localhost:8080 on your laptop: the dashboard. It first lists every device, with what to do for one that is not ready; once all are, press A on the right controller to open the arms. It shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
+   While `dhk-collect` runs, open http://localhost:8080 on your laptop: the dashboard. It first lists every device, with what to do for one that is not ready; once all are, press A on the right controller to open the arms. It shows the three cameras as they are recorded, whether you are recording, and both arms. You can type the task there ("Set task"), play back the episodes you saved, and tick the ones you do not want and delete them ("Delete selected").
 
    Your episodes are saved on the station in the `--dataset-dir` folder, here `~/hackathon_data/myteam-cubes`, as a LeRobot v2.1 dataset: not in the repo, and not uploaded until you fine-tune. [Where your data is stored](docs/data_collection.md#where-your-data-is-stored) shows what is inside and how to copy it to your laptop.
 

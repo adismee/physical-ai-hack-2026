@@ -10,11 +10,12 @@ ssh -L 8080:localhost:8080 <user>@<station>
 The page shows the three cameras as they are recorded, every device's state with the fix for one that is not ready
 (the Quest, each camera, each arm's link), what the session is waiting for, whether an episode is recording, each
 arm's clutch and tool position, warnings, the session's events, and the dataset's episodes with their videos to play
-back. Its only actions are devices' fixes, which only `dhk-collect` offers (devices.DeviceSet.apply_fix()): a button that
-brings a CAN link up when it is down, one that restarts the Quest's app when its data stops, and one that restarts adb
-before the Quest is open. Nothing on it drives the arms or changes the dataset. A fix is taken only from the
-page itself (a custom header, and an `Origin` that matches the page's address), so no other website open in the
-same browser can send one through the SSH tunnel. `scripts/check_cameras.py` serves the same page with the
+back. Its actions, which only `dhk-collect` offers: devices' fixes (devices.DeviceSet.apply_fix(): bring a CAN link up
+when it is down, restart the Quest's app when its data stops, restart adb before the Quest is open), setting the task
+text the next episodes record, and deleting chosen episodes (refused while one records; the later ones are
+renumbered). Nothing on it drives the arms. An action is taken only from the page itself (a custom header, and an
+`Origin` that matches the page's address), so no other website open in the same browser can send one through the SSH
+tunnel. `scripts/check_cameras.py` serves the same page with the
 cameras alone.
 
 @see Dashboard
@@ -60,6 +61,9 @@ class Dashboard:
         dataset_root: pathlib.Path | None,
         title: str,
         on_fix: Callable[[str], tuple[bool, str]] | None = None,
+        on_task: Callable[[str], tuple[bool, str]] | None = None,
+        on_delete: Callable[[list[int]], tuple[bool, str]] | None = None,
+        task_of: Callable[[], str] | None = None,
     ) -> None:
         """Starts serving.
 
@@ -70,6 +74,9 @@ class Dashboard:
         @param title The page's heading, e.g. the station's name.
         @param on_fix Runs a device's fix by its id (devices.Status.fix), returning whether it worked and what happened;
             None offers no fixes.
+        @param on_task Sets the task text the next episodes record; None offers no task box.
+        @param on_delete Deletes episodes by number; None offers no delete.
+        @param task_of The task text the next episode records, for the page.
         @throws OSError The port is taken.
         """
         self._frame = frame
@@ -77,6 +84,9 @@ class Dashboard:
         self._dataset_root = dataset_root
         self._title = title
         self._on_fix = on_fix
+        self._on_task = on_task
+        self._on_delete = on_delete
+        self._task_of = task_of
         self._lock = threading.Lock()
         self._snapshot: dict[str, Any] = {}
         self._devices: list[dict[str, Any]] = []
@@ -127,6 +137,9 @@ class Dashboard:
                 "snapshot": self._snapshot,
                 "devices": self._devices,
                 "phase": self._phase,
+                "task": self._task_of() if self._task_of else None,
+                "can_set_task": self._on_task is not None,
+                "can_delete": self._on_delete is not None and self._dataset_root is not None,
                 "events": list(self._events),
             }
 
@@ -179,22 +192,39 @@ def _handler_for(board: Dashboard) -> type[http.server.BaseHTTPRequestHandler]:
                 self._send(404, "text/plain", b"not found")
 
         def do_POST(self) -> None:  # noqa: N802 - the name http.server calls
-            if self.path.split("?", 1)[0] != "/api/fix" or board._on_fix is None:
+            path = self.path.split("?", 1)[0]
+            actions = {
+                "/api/fix": board._on_fix,
+                "/api/task": board._on_task,
+                "/api/episodes/delete": board._on_delete,
+            }
+            action = actions.get(path)
+            if action is None:
                 self._send(404, "text/plain", b"not found")
                 return
             # Only the page itself: a custom header (which another site's page cannot add without a preflight this
             # server never answers) and, when the browser sends one, an Origin naming this page's address.
             origin = self.headers.get("Origin")
             if self.headers.get("X-Dashboard") != "1" or (origin and origin != f"http://{self.headers.get('Host')}"):
-                self._send(403, "text/plain", b"fixes are taken from the dashboard page only")
+                self._send(403, "text/plain", b"actions are taken from the dashboard page only")
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                fix = json.loads(self.rfile.read(min(length, 4096)) or b"{}").get("fix", "")
-            except (ValueError, AttributeError):
-                self._send(400, "text/plain", b'expected {"fix": "<id>"}')
+                body = json.loads(self.rfile.read(min(length, 16384)) or b"{}")
+                if path == "/api/fix":
+                    ok, message = action(str(body.get("fix", "")))
+                elif path == "/api/task":
+                    ok, message = action(str(body.get("task", "")))
+                else:
+                    episodes = body.get("episodes")
+                    if not isinstance(episodes, list) or not all(
+                        isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in episodes
+                    ):
+                        raise ValueError("episodes must be a list of episode numbers")
+                    ok, message = action(episodes)
+            except (ValueError, AttributeError) as error:
+                self._send(400, "text/plain", f"bad request: {error}".encode())
                 return
-            ok, message = board._on_fix(str(fix))
             self._send_json({"ok": ok, "message": message})
 
         def _camera(self, role: str) -> None:
@@ -309,6 +339,14 @@ PAGE = """<!doctype html>
                    background: var(--bg); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
   .device button:disabled { opacity: .6; cursor: default; }
   .device .result { margin-top: 6px; color: var(--muted); }
+  #taskform { display: flex; gap: 8px; margin: 4px 0 10px; }
+  #taskform input { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+                    background: var(--bg); color: var(--text); font: inherit; }
+  button.action { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg);
+                  color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  button.action:disabled { opacity: .5; cursor: default; }
+  button.danger { border-color: var(--rec); color: var(--rec); }
+  .actionresult { color: var(--muted); margin-top: 4px; min-height: 1.2em; }
 </style>
 </head>
 <body>
@@ -324,6 +362,12 @@ PAGE = """<!doctype html>
 <section class="grid">
   <div class="panel">
     <h2>Session</h2>
+    <div id="taskbox" hidden>
+      <div>Task for the next episodes: <b id="tasknow"></b></div>
+      <form id="taskform"><input id="taskinput" maxlength="512" placeholder="type the task, e.g. put the red cube in the bowl">
+        <button class="action" type="submit">Set task</button></form>
+      <div id="taskresult" class="actionresult"></div>
+    </div>
     <div id="session" class="muted">no session yet</div>
     <div class="arms" id="arms"></div>
     <div id="warnings"></div>
@@ -334,13 +378,25 @@ PAGE = """<!doctype html>
   </div>
   <div class="panel">
     <h2>Episodes</h2>
+    <div id="deletebox" hidden>
+      <button id="deletebutton" class="action danger" type="button" disabled>Delete selected</button>
+      <div id="deleteresult" class="actionresult"></div>
+    </div>
     <div class="tablewrap"><table id="episodes"></table></div>
     <video id="player" controls></video>
   </div>
 </section>
 <script>
 const $ = (id) => document.getElementById(id);
-let cameras = [], audio = null, wasRecording = null, lastCount = null;
+let cameras = [], audio = null, wasRecording = null, lastCount = null, recordingNow = false, canDelete = false;
+const selected = new Set();
+async function postAction(path, body) {
+  try {
+    const reply = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Dashboard": "1"},
+                                     body: JSON.stringify(body)});
+    return reply.ok ? await reply.json() : {ok: false, message: `refused (${reply.status}): ${await reply.text()}`};
+  } catch (e) { return {ok: false, message: "could not reach the station"}; }
+}
 
 function beep(freq, times) {
   if (!audio || !$("sound").checked) return;
@@ -409,6 +465,13 @@ function renderDevices(status) {
 function render(status) {
   $("title").textContent = status.title;
   renderDevices(status);
+  $("taskbox").hidden = !status.can_set_task;
+  if (status.task !== null) $("tasknow").textContent = status.task;
+  canDelete = !!status.can_delete;
+  recordingNow = !!(status.snapshot && status.snapshot.recording);
+  $("deletebox").hidden = !canDelete;
+  $("deletebutton").disabled = recordingNow || selected.size === 0;
+  $("deletebutton").title = recordingNow ? "save (A) or discard (B) the episode first" : "";
   if (cameras.length !== status.cameras.length) buildCameras(status.cameras);
   const s = status.snapshot;
   $("mode").textContent = s.mode || (status.phase ? "starting" : "camera check");
@@ -440,11 +503,19 @@ function render(status) {
 }
 
 function renderEpisodes(episodes) {
-  const head = "<tr><th>#</th><th>length</th><th>task</th><th>play</th></tr>";
+  const present = new Set(episodes.map((e) => e.index));
+  [...selected].forEach((n) => { if (!present.has(n)) selected.delete(n); });
+  const pick = (e) => canDelete ? `<td><input type="checkbox" class="pick" data-ep="${e.index}"${selected.has(e.index) ? " checked" : ""}></td>` : "";
+  const head = (canDelete ? "<tr><th></th>" : "<tr>") + "<th>#</th><th>length</th><th>task</th><th>play</th></tr>";
   $("episodes").innerHTML = head + episodes.slice().reverse().map((e) =>
-    `<tr><td>${e.index}</td><td>${e.seconds} s</td><td class="task"></td><td>` +
+    `<tr>${pick(e)}<td>${e.index}</td><td>${e.seconds} s</td><td class="task"></td><td>` +
     cameras.map((r) => `<button class="link" data-ep="${e.index}" data-role="${r}">${r}</button>`).join("") + "</td></tr>"
   ).join("");
+  $("episodes").querySelectorAll("input.pick").forEach((box) => box.addEventListener("change", () => {
+    const n = Number(box.dataset.ep);
+    if (box.checked) selected.add(n); else selected.delete(n);
+    $("deletebutton").disabled = recordingNow || selected.size === 0;
+  }));
   const rows = $("episodes").querySelectorAll("td.task");
   episodes.slice().reverse().forEach((e, i) => { rows[i].textContent = e.tasks.join("; "); });
   $("episodes").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
@@ -453,6 +524,24 @@ function renderEpisodes(episodes) {
     player.style.display = "block"; player.play();
   }));
 }
+
+$("taskform").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const reply = await postAction("/api/task", {task: $("taskinput").value});
+  $("taskresult").textContent = reply.message;
+  if (reply.ok) $("taskinput").value = "";
+});
+$("deletebutton").addEventListener("click", async () => {
+  const chosen = [...selected].sort((a, b) => a - b);
+  if (!chosen.length) return;
+  const what = chosen.length === 1 ? `episode ${chosen[0]}` : `episodes ${chosen.join(", ")}`;
+  if (!confirm(`Delete ${what}? The episodes after them are renumbered. This cannot be undone.`)) return;
+  $("deletebutton").disabled = true;
+  const reply = await postAction("/api/episodes/delete", {episodes: chosen});
+  $("deleteresult").textContent = reply.message;
+  if (reply.ok) selected.clear();
+  try { renderEpisodes(await (await fetch("/api/episodes")).json()); } catch (e) {}
+});
 
 async function poll() {
   try { render(await (await fetch("/api/status")).json()); }
