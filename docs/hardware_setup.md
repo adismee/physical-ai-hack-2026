@@ -9,7 +9,7 @@ Claude Code can walk you through these steps: see "For organizers" in the README
 You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
 
 ```bash
-sudo apt install git git-lfs adb tmux
+sudo apt install git git-lfs adb tmux curl
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
@@ -17,7 +17,7 @@ git clone https://github.com/koustubh1012/physical-ai-hacks.git
 cd physical-ai-hacks
 ```
 
-Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above (not the snap the message suggests).
+Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests.
 
 Install the dependencies for your arm type. A station installs one arm type, never both:
 
