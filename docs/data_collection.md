@@ -84,6 +84,7 @@ Tick "sound cues" and the laptop beeps when recording starts (one beep), when an
 
 If the page does not load:
 
+- **`channel 3: open failed: connect failed: Connection refused` lines in the SSH terminal**: a browser tab is asking for the page while `dhk-collect` is not running yet. They are harmless and stop once it runs; close the tab until then if they get in the way of your typing.
 - **"This site can't be reached"**: `dhk-collect` is not running (the page exists only while it runs), or your laptop's SSH connection was opened without `-L 8080:localhost:8080`. Reconnect from the laptop with it.
 - **`dhk-collect` says `dashboard: port 8080 is not free`**: something on the station already holds the port, usually an `ssh -L 8080:...` that was run on the station itself. Type `exit` in that terminal to close it (the prompt stays the same: it is the same computer), or run on with `--dashboard-port 8081` and forward that port instead.
 
