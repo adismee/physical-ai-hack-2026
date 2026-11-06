@@ -2,6 +2,8 @@
 
 Teach a pair of robot arms a task with a Meta Quest, then fine-tune Dream-1, the Dream Labs robot model, on your demonstrations and run it on the same arms.
 
+Built for the [MakerMods Physical AI Hackathon](https://luma.com/pah) (November 7-8, San Francisco), presented with MakerMods and Dream Labs.
+
 This kit drives two follower arms from the Quest's controllers, records each demonstration as a [LeRobot v2.1](https://github.com/huggingface/lerobot) dataset (the format Dream fine-tuning reads), and hands the dataset to the [Dream API](https://platform.dreamlabs.ai/api-documentation/fine-tuning/). It supports three kinds of arms, each driven through its maker's own open-source SDK:
 
 | Arms | Driven by |
@@ -50,15 +52,7 @@ These are real, strong arms. Keep the emergency stop (or the arms' power switch)
 
 [docs/hardware_setup.md](docs/hardware_setup.md) takes a station from parts on a table to a working dry run: the computer, the arms, the cameras, the Quest and the Dream library.
 
-Claude Code can walk you through it. This repo carries a `station-setup` skill and a project MCP server for the Dream documentation (`.mcp.json`, which reads your API key from the environment). Start Claude Code from the repo with your Dream credentials loaded, then run the skill:
-
-```bash
-set -a; . ~/.dreamlabs/credentials; set +a     # exports DREAM_API_KEY for the Dream docs server
-claude
-> /station-setup
-```
-
-On its first start in this repo, Claude Code asks you to approve the project's `dreamlabs-docs` server. Claude runs the checks and fills in the config with you. You do everything physical, and everything that powers or moves an arm (`CLAUDE.md` holds its rules).
+Claude Code can walk you through it with the repo's `station-setup` skill: start `claude` in the repo and run `/station-setup`. If you have added Dream's documentation server to Claude Code (the Dream platform's Setup API page offers it), Claude reads the Dream docs through it as well. Claude runs the checks and fills in the config with you. You do everything physical, and everything that powers or moves an arm (`CLAUDE.md` holds its rules).
 
 No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --sim` drives i2rt's simulated arms with the Quest and records blank camera frames, so you can try the whole flow.
 
@@ -75,7 +69,7 @@ No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --si
 | `tools/` | Dream API steps, run in the Dream library's environment: `add_eef.py`, `finetune.py` |
 | `scripts/` | Device checks and the URDF download |
 | `docs/` | Collection, fine-tuning, running and setup guides |
-| `CLAUDE.md`, `.claude/skills/`, `.mcp.json` | Claude Code's rules, the `station-setup` skill, and the Dream docs MCP server |
+| `CLAUDE.md`, `.claude/skills/` | Claude Code's rules for this repo and the `station-setup` skill |
 
 Run the tests with `uv sync --group dream && uv run pytest` (no hardware needed).
 

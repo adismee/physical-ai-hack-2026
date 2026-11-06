@@ -22,7 +22,7 @@ Guidance for Claude Code in this repository. The repo is the Dream hackathon kit
 - The station's config is `configs/station.yaml`, a filled-in copy of `configs/yam.yaml`, `metal.yaml` or `maker.yaml`; it is not committed. Load-check it with `uv run python -c "from dream_hackathon import config; config.load('configs/station.yaml')"`.
 - The Dream steps run in `~/dream-env`, the Dream library's environment: `~/dream-env/bin/python tools/add_eef.py ...` (Metal and Maker arms only) and `~/dream-env/bin/python tools/finetune.py ...`.
 - Tests need no hardware: `uv sync --group dream && uv run pytest`.
-- Dream's documentation is available through the `dreamlabs-docs` MCP server in `.mcp.json`. It needs `DREAM_API_KEY` in the environment Claude Code starts from: `set -a; . ~/.dreamlabs/credentials; set +a; claude`.
+- Dream's documentation: https://platform.dreamlabs.ai/api-documentation/, or the `dreamlabs-docs` MCP server when the person has added it to Claude Code (the Dream platform's Setup API page offers it).
 
 ## Changing the code
 

@@ -7,7 +7,7 @@ description: Walk a hackathon organizer through setting up, checking or fixing o
 
 You and the organizer set up one station together, following `docs/hardware_setup.md`. You run the checks, read their output and edit the config. The organizer does everything physical, everything that needs `sudo`, and everything that powers or moves an arm. Keep `CLAUDE.md`'s safety rules throughout; this skill never relaxes them.
 
-Work through the steps in order, one at a time. After each, say what you found and what comes next. When a check fails, find the cause before moving on, using `docs/hardware_setup.md` and the `dreamlabs-docs` MCP server for the Dream library.
+Work through the steps in order, one at a time. After each, say what you found and what comes next. When a check fails, find the cause before moving on, using `docs/hardware_setup.md` and, for the Dream library, Dream's documentation (the `dreamlabs-docs` MCP server if it has been added, else https://platform.dreamlabs.ai/api-documentation/).
 
 ## 0. Ask first
 
@@ -33,7 +33,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 3. The Dream library
 
-1. Check that `~/dream-env/bin/dreamcli` and `~/.dreamlabs/credentials` exist. Never print the credentials. If either is missing, the organizer runs the two steps on the Dream Getting started page with the team's API key (the `dreamlabs-docs` MCP server has them).
+1. Check that `~/dream-env/bin/dreamcli` and `~/.dreamlabs/credentials` exist. Never print the credentials. If either is missing, the organizer runs the two steps on the Dream Getting started page (https://platform.dreamlabs.ai/api-documentation/) with the team's API key.
 2. The organizer runs `dreamcli setup` for this arm type (rule 1: you never run it). It writes `~/.dreamlabs/station.yaml`. During its camera step, they give each camera the same role as in `configs/station.yaml`.
 
 ## 4. Metal and Maker arms only
