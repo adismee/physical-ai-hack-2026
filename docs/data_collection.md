@@ -4,20 +4,26 @@ Your station is already set up; this is where you start. You teach the model by 
 
 ## Quick start
 
-1. From your laptop, connect to the station with the dashboard's port forwarded, and open a tmux session so a dropped connection does not end yours:
+1. **On your laptop**, connect to the station with the dashboard's port forwarded. Run this on your laptop only: run on the station, it takes the dashboard's port there and your laptop gets nothing.
 
    ```bash
    ssh -L 8080:localhost:8080 <user>@<station>
+   ```
+
+2. **On the station**, in the terminal that opened, start a tmux session (or rejoin yours), so a dropped connection does not end it:
+
+   ```bash
    tmux new -A -s collect
    cd ~/physical-ai-hacks
    ```
 
-2. Open http://localhost:8080 in your laptop's browser: the dashboard shows the cameras, the arms and your episodes.
 3. With the arms in their start pose, put on the Quest and practice once with the arms still (Ctrl+C ends it):
 
    ```bash
    uv run dhk-collect --config configs/station.yaml --dry-run
    ```
+
+   While it runs, open http://localhost:8080 in your laptop's browser: the dashboard shows the cameras, the arms and your episodes. The page is there only while `dhk-collect` runs; before that, the browser cannot connect.
 
 4. Start the session, with your task and your team's own dataset folder:
 
@@ -45,15 +51,20 @@ The arm follows how your hand moves after you grip, not where your hand is. If y
 
 ## Working on a station over SSH
 
-The station has no screen. Connect from your laptop with the dashboard's port forwarded, and start a tmux session, so that a dropped Wi-Fi connection does not end your session:
+The station has no screen. Connect from your laptop with the dashboard's port forwarded. This line runs on your laptop, never on the station:
 
 ```bash
 ssh -L 8080:localhost:8080 <user>@<station>
-tmux new -A -s collect          # after a drop, reconnect and run the same line to get back to it
+```
+
+Then, on the station, start a tmux session, so that a dropped Wi-Fi connection does not end your session:
+
+```bash
+tmux new -A -s collect          # after a drop, reconnect from the laptop and run the same line to get back to it
 cd ~/physical-ai-hacks
 ```
 
-Then open http://localhost:8080 in your laptop's browser. The dashboard shows:
+While `dhk-collect` runs, open http://localhost:8080 in your laptop's browser. The dashboard shows:
 
 - The three cameras, cropped and sized as they are recorded.
 - Whether an episode is recording, and for how long.
@@ -62,6 +73,11 @@ Then open http://localhost:8080 in your laptop's browser. The dashboard shows:
 - The episodes saved so far, with each camera's video to play back.
 
 Tick "sound cues" and the laptop beeps when recording starts (one beep), when an episode is saved (two) or discarded (a low one). That lets a teammate at the laptop follow the operator. The page only watches: nothing on it moves the arms or changes your data.
+
+If the page does not load:
+
+- **"This site can't be reached"**: `dhk-collect` is not running (the page exists only while it runs), or your laptop's SSH connection was opened without `-L 8080:localhost:8080`. Reconnect from the laptop with it.
+- **`dhk-collect` says `dashboard: port 8080 is not free`**: something on the station already holds the port, usually an `ssh -L 8080:...` that was run on the station itself. Type `exit` in that terminal to close it (the prompt stays the same: it is the same computer), or run on with `--dashboard-port 8081` and forward that port instead.
 
 If the connection drops outside tmux, the session ends safely: the episode being recorded is discarded, the arms return to where they started and are released, and the rest of the output goes to `~/.cache/dream_hackathon/collect.log`. Only one program can drive the arms at a time. If someone else is using the station, `dhk-collect` says who, from where and since when.
 

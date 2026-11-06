@@ -47,9 +47,17 @@ def preview(station: config.StationConfig, port: int) -> None:
     def frames() -> dict:
         return {role: camera.latest() for role, camera in open_cameras.items()}
 
-    board = dashboard.Dashboard(
-        port, frames, layouts.video_keys(station.family), None, title=f"{socket.gethostname()}: camera check"
-    )
+    try:
+        board = dashboard.Dashboard(
+            port, frames, layouts.video_keys(station.family), None, title=f"{socket.gethostname()}: camera check"
+        )
+    except OSError as error:
+        for camera in open_cameras.values():
+            camera.close()
+        raise SystemExit(
+            f"port {port} is not free ({error}). Usually an `ssh -L {port}:...` that was run on the station itself "
+            "holds it: type `exit` in that terminal (the forward belongs on your laptop), or pass --port 8081"
+        ) from None
     print(board.how_to_open())
     try:
         while True:

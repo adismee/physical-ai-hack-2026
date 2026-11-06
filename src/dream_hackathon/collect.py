@@ -387,7 +387,11 @@ def _open_dashboard(station: config.StationConfig, frames: FrameSource, port: in
             title=f"{socket.gethostname()}: {station.arm} station",
         )
     except OSError as error:
-        _say(f"dashboard: port {port} is not free ({error}); going on without it (--dashboard-port picks another)")
+        _say(
+            f"dashboard: port {port} is not free ({error}); going on without it. Usually an `ssh -L {port}:...` "
+            "that was run on the station itself holds it: type `exit` in that terminal (the forward belongs on "
+            "your laptop), or pick another port with --dashboard-port"
+        )
         return None
     _say(board.how_to_open())
     return board

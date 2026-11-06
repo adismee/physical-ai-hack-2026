@@ -20,15 +20,22 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
 1. **Collect demonstrations** ([docs/data_collection.md](docs/data_collection.md)). Hold a controller's grip to drive that arm and pull its trigger to close its gripper. Press A to start and stop recording an episode, and B to throw one away.
 
+   On your laptop (this line never runs on the station):
+
    ```bash
-   ssh -L 8080:localhost:8080 <user>@<station>     # then open http://localhost:8080 on your laptop: the dashboard
+   ssh -L 8080:localhost:8080 <user>@<station>
+   ```
+
+   Then on the station, in the terminal that opened:
+
+   ```bash
    tmux new -A -s collect                          # keeps the session running if your connection drops
    cd ~/physical-ai-hacks
    uv run dhk-collect --config configs/station.yaml --dry-run      # practice: the arms do not move
    uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
    ```
 
-   The dashboard shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
+   While `dhk-collect` runs, open http://localhost:8080 on your laptop: the dashboard. It shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
 
    Your episodes are saved on the station in the `--dataset-dir` folder, here `~/hackathon_data/myteam-cubes`, as a LeRobot v2.1 dataset: not in the repo, and not uploaded until you fine-tune. [Where your data is stored](docs/data_collection.md#where-your-data-is-stored) shows what is inside and how to copy it to your laptop.
 
