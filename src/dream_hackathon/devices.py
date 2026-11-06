@@ -143,7 +143,8 @@ def apply_fix(
         return False, f"could not bring {port} up: {error}"
     if result.returncode == 0:
         return True, f"brought {port} up"
-    if "password" in result.stderr:
+    # sudo says "a password is required"; sudo-rs, Ubuntu 26.04's, "interactive authentication is required".
+    if "password" in result.stderr or "authentication" in result.stderr:
         return False, (
             f"could not bring {port} up: this station asks for a password, so run "
             f"`sudo ip link set {port} up type can bitrate {CAN_BITRATE}` in a terminal (organizers: "

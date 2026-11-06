@@ -399,7 +399,8 @@ def test_the_fix_refuses_anything_but_bringing_a_down_arm_link_up(tmp_path):
 def test_a_station_without_the_sudo_rule_gets_the_command_to_type(tmp_path):
     station = Station(tmp_path)
     (station.sys_net / "can_follower_l" / "flags").write_text("0x80\n")
-    run = FakeRun(returncode=1, stderr="sudo: a password is required\n")
-    ok, message = devices.apply_fix(station.config, "can-up:can_follower_l", station.sys_net, run)
-    assert not ok and "sudo ip link set can_follower_l up type can bitrate 1000000" in message
-    assert "allow_can_bringup.sh" in message
+    for refusal in ("sudo: a password is required", "sudo: interactive authentication is required"):  # sudo, sudo-rs
+        run = FakeRun(returncode=1, stderr=refusal + "\n")
+        ok, message = devices.apply_fix(station.config, "can-up:can_follower_l", station.sys_net, run)
+        assert not ok and "sudo ip link set can_follower_l up type can bitrate 1000000" in message
+        assert "allow_can_bringup.sh" in message

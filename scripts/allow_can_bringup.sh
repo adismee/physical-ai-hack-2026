@@ -42,11 +42,16 @@ mkdir -p "$HOME/.local/share/dream_hackathon"
 echo "$rule" > "$HOME/.local/share/dream_hackathon/can-sudo-rule"  # how scripts/wipe_station.sh knows to remove it
 echo "installed $rule:"
 sed 's/^/  /' "$draft"  # the installed copy is readable by root only
+# Check by running the very command the dashboard runs: it brings the link up, which is harmless (it never takes one
+# down), or fails in ip itself when the link is up already. Only a sudo that still asks for a password fails here.
+# (sudo -l cannot tell: sudo-rs, Ubuntu 26.04's sudo, may ask for authentication to list even an allowed command.)
 for link in "${links[@]}"; do
-  if sudo -n -l "$ip" link set "$link" up type can bitrate 1000000 >/dev/null 2>&1; then
-    echo "check: $user may now bring $link up without a password"
-  else
-    echo "check FAILED for $link: sudo still asks for a password"
+  if out=$(sudo -n "$ip" link set "$link" up type can bitrate 1000000 2>&1); then
+    echo "check: sudo let $user bring $link up without a password"
+  elif grep -qiE "password|authentication" <<<"$out"; then
+    echo "check FAILED for $link: sudo still asks for a password ($out)"
     exit 1
+  else
+    echo "check: sudo let $user run it without a password ($link: ${out:-done})"
   fi
 done
