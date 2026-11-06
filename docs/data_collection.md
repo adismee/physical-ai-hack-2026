@@ -23,7 +23,7 @@ The station has no screen. Connect from your laptop with the dashboard's port fo
 ```bash
 ssh -L 8080:localhost:8080 <user>@<station>
 tmux new -A -s collect          # after a drop, reconnect and run the same line to get back to it
-cd ~/dream-hackathon-kit
+cd ~/physical-ai-hacks
 ```
 
 Then open http://localhost:8080 in your laptop's browser. The dashboard shows:

@@ -12,8 +12,8 @@ You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per came
 sudo apt install git git-lfs adb tmux
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
-git clone https://github.com/koustubh1012/dream-hackathon-kit.git
-cd dream-hackathon-kit
+git clone https://github.com/koustubh1012/physical-ai-hacks.git
+cd physical-ai-hacks
 ```
 
 Install the dependencies for your arm type. A station installs one arm type, never both:

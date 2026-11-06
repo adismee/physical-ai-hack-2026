@@ -23,7 +23,7 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
    ```bash
    ssh -L 8080:localhost:8080 <user>@<station>     # then open http://localhost:8080 on your laptop: the dashboard
    tmux new -A -s collect                          # keeps the session running if your connection drops
-   cd ~/dream-hackathon-kit
+   cd ~/physical-ai-hacks
    uv run dhk-collect --config configs/station.yaml --dry-run      # practice: the arms do not move
    uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
    ```
