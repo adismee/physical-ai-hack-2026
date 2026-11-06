@@ -1,0 +1,173 @@
+"""The station's cameras: each read on its own thread, the newest frame kept at the recording size.
+
+Every frame is center-cropped to 16:9 and resized to the recording size, the same way for every camera: Dream-1 was
+trained mostly on 16:9 video, so a 4:3 camera is cropped rather than squashed. Use a 16:9 capture mode (1280x720)
+when the camera has one.
+
+@see Camera, open_cameras()
+"""
+
+import threading
+import time
+
+import cv2
+import numpy as np
+import numpy.typing as npt
+
+from dream_hackathon import config
+
+## A camera with no new frame for this long is reported as stalled.
+STALL_AFTER_S = 0.5
+
+
+class CameraError(RuntimeError):
+    """A camera cannot be opened, or stopped delivering frames."""
+
+
+class Camera:
+    """One camera, read continuously on a thread; latest() never waits for the device.
+
+    Attributes:
+    - role: `overhead`, `wrist_l` or `wrist_r`.
+    """
+
+    def __init__(self, cfg: config.CameraConfig, width: int, height: int) -> None:
+        """Opens the device and starts reading.
+
+        @param cfg The camera's config.
+        @param width, height The recording size frames are cropped and resized to.
+        @throws CameraError The device cannot be opened, or gives no frame within two seconds.
+        """
+        self.role = cfg.role
+        self._size = (width, height)
+        self._read: _UvcReader | _RealSenseReader = (
+            _RealSenseReader(cfg) if cfg.kind == "realsense" else _UvcReader(cfg)
+        )
+        self._lock = threading.Lock()
+        self._frame: npt.NDArray[np.uint8] | None = None
+        self._frame_s = 0.0
+        self._error: str | None = None
+        self._running = True
+        self._thread = threading.Thread(target=self._run, name=f"camera-{cfg.role}", daemon=True)
+        self._thread.start()
+        deadline = time.monotonic() + 2.0
+        while self._frame is None and self._error is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if self._frame is None:
+            self.close()
+            raise CameraError(f"camera '{self.role}' ({cfg.kind}) gave no frame: {self._error or 'timed out'}")
+
+    def latest(self) -> npt.NDArray[np.uint8]:
+        """The newest frame, BGR, at the recording size.
+
+        @throws CameraError The camera has given no new frame for STALL_AFTER_S.
+        """
+        with self._lock:
+            frame, age_s = self._frame, time.monotonic() - self._frame_s
+        if frame is None or age_s > STALL_AFTER_S:
+            raise CameraError(f"camera '{self.role}' stalled ({self._error or f'no frame for {age_s:.1f} s'})")
+        return frame
+
+    def close(self) -> None:
+        self._running = False
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        try:
+            while self._running:
+                frame = self._read()
+                if frame is None:
+                    self._error = "the device returned no frame"
+                    time.sleep(0.01)
+                    continue
+                small = to_record_size(frame, *self._size)
+                with self._lock:
+                    self._frame, self._frame_s = small, time.monotonic()
+        except Exception as error:  # noqa: BLE001 - reported by latest() on the recording thread
+            self._error = f"{type(error).__name__}: {error}"
+        finally:
+            self._read.release()
+
+
+def open_cameras(cfgs: tuple[config.CameraConfig, ...], width: int, height: int) -> dict[str, Camera]:
+    """Opens every camera; closes the ones already open if one fails.
+
+    @return Per role, its Camera.
+    """
+    cameras: dict[str, Camera] = {}
+    try:
+        for cfg in cfgs:
+            cameras[cfg.role] = Camera(cfg, width, height)
+    except BaseException:
+        for camera in cameras.values():
+            camera.close()
+        raise
+    return cameras
+
+
+def to_record_size(frame: npt.NDArray[np.uint8], width: int, height: int) -> npt.NDArray[np.uint8]:
+    """Center-crops a frame to the recording's aspect ratio, then resizes it.
+
+    @param frame BGR `[h, w, 3]`.
+    @param width, height The recording size.
+    @return BGR `[height, width, 3]`.
+    """
+    h, w = frame.shape[:2]
+    if w * height > h * width:  # wider than the target: trim the sides
+        keep = h * width // height
+        left = (w - keep) // 2
+        frame = frame[:, left : left + keep]
+    elif w * height < h * width:  # taller: trim top and bottom
+        keep = w * height // width
+        top = (h - keep) // 2
+        frame = frame[top : top + keep]
+    return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+
+
+class _UvcReader:
+    """Reads one UVC camera with OpenCV, in MJPG so a USB port carries 720p at 30 fps."""
+
+    def __init__(self, cfg: config.CameraConfig) -> None:
+        assert cfg.device is not None
+        device: int | str = int(cfg.device) if cfg.device.isdigit() else cfg.device
+        self._capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
+        if not self._capture.isOpened():
+            raise CameraError(f"camera '{cfg.role}': cannot open {cfg.device}")
+        self._capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
+        self._capture.set(cv2.CAP_PROP_FPS, cfg.fps)
+        self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    def __call__(self) -> npt.NDArray[np.uint8] | None:
+        ok, frame = self._capture.read()
+        return frame if ok else None
+
+    def release(self) -> None:
+        self._capture.release()
+
+
+class _RealSenseReader:
+    """Reads one RealSense camera's color stream."""
+
+    def __init__(self, cfg: config.CameraConfig) -> None:
+        try:
+            import pyrealsense2 as rs
+        except ImportError as error:
+            raise CameraError("a RealSense camera needs the realsense extra: uv sync --extra realsense ...") from error
+        self._pipeline = rs.pipeline()
+        rs_config = rs.config()
+        rs_config.enable_device(cfg.serial)
+        rs_config.enable_stream(rs.stream.color, cfg.width, cfg.height, rs.format.bgr8, cfg.fps)
+        try:
+            self._pipeline.start(rs_config)
+        except RuntimeError as error:
+            raise CameraError(f"camera '{cfg.role}': RealSense {cfg.serial}: {error}") from error
+
+    def __call__(self) -> npt.NDArray[np.uint8] | None:
+        frames = self._pipeline.wait_for_frames(timeout_ms=1000)
+        color = frames.get_color_frame()
+        return np.asanyarray(color.get_data()).copy() if color else None
+
+    def release(self) -> None:
+        self._pipeline.stop()

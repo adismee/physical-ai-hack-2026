@@ -1,0 +1,119 @@
+# Setting up a station
+
+A station is one computer driving two follower arms, three cameras and one Meta Quest. This guide takes you from parts on a table to `dhk-collect --dry-run` showing the right numbers. Do the steps in order: each one checks a single device before the next one depends on it.
+
+## 1. The computer
+
+You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
+
+```bash
+sudo apt install git git-lfs adb
+git lfs install                                  # the Quest app is stored with git LFS
+curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
+git clone https://github.com/dreamlabs-co/dream-hackathon-kit.git
+cd dream-hackathon-kit
+```
+
+Install the dependencies for your arm type. A station installs one arm type, never both:
+
+```bash
+uv sync --extra yam          # YAM arms
+uv sync --extra makermods    # Metal or Maker arms
+```
+
+Add `--extra realsense` to that line if any camera is an Intel RealSense.
+
+Then copy the config for your arms. You will fill it in as you go:
+
+```bash
+cp configs/yam.yaml configs/my_station.yaml      # or configs/metal.yaml, configs/maker.yaml
+```
+
+## 2. The arms
+
+### YAM arms
+
+The YAM arms talk over CAN, one USB-CAN adapter per arm, at 1 Mbit/s. Follow i2rt's guide to [give each adapter a fixed name](https://github.com/i2rt-robotics/i2rt/blob/main/docs/guides/set-persistent-can-ids.md), `can_follower_l` and `can_follower_r`. Plug in one adapter at a time while you do. Then bring the interfaces up:
+
+```bash
+ip link show                                          # both names are listed
+sudo ip link set can_follower_l up type can bitrate 1000000
+sudo ip link set can_follower_r up type can bitrate 1000000
+```
+
+i2rt's README explains how to bring them up on every boot. In your config, `arms.left.port` and `arms.right.port` are these names, and `yam.gripper` is your gripper type (`linear_4310` for the stock gripper).
+
+When the collector opens a YAM arm, i2rt holds it where it is. It also sweeps each linear gripper with a small force to find its travel, so keep fingers clear of the jaws.
+
+### Metal and Maker arms
+
+Each arm has its own CAN adapter. List them with `ls -l /dev/serial/by-id/` and put each arm's path in `arms.<side>.port` (`makermods.can_interface: slcan`). With a SocketCAN adapter, use the interface name (`can0`) and `socketcan` instead.
+
+Before the first session:
+
+1. **Calibrate each arm's zero in makermodslab**, MakerMods' own app ([makermodslab](https://github.com/makermods-robotics/makermodslab)). The Metal arm's zero pose is upright with every joint at 0 and the gripper closed; the Maker arm's is folded against its base. Follow the pose makermodslab's calibration shows you. The zero is stored in the motors. This kit never re-zeroes an arm, and a Maker arm whose zero no longer matches refuses to move until it is calibrated again.
+2. **Run `dreamcli setup` once** (step 6 below). The setup wizard measures each gripper's motor angle fully open and fully closed. Copy the two numbers into `arms.<side>.gripper_open_deg` and `gripper_closed_deg`: they are in the config `dreamcli setup` wrote (`~/.dreamlabs/station.yaml`). Your recordings and your model then map the gripper the same way. A Metal arm needs both; a Maker arm ships with dreamcli's defaults filled in.
+3. **Download the arm's URDF** for the teleop IK: `uv run python scripts/fetch_urdf.py metal` (or `maker`).
+4. **Measure each arm's tool center point** (next section).
+
+Both arms are brakeless. Start every session with them resting where they can go limp, supported or folded: that is where they return, and where their torque is released at the end. Only one program can use an arm's adapter at a time, so close makermodslab and `dreamcli` before collecting.
+
+### Tool center point (Metal and Maker arms)
+
+The tool center point (TCP) is the point between the gripper's closed fingertips. The Quest drives that point: when you turn your wrist, the gripper turns about it. **Measure it on your gripper; do not guess it or copy it from another arm.** With the gripper closed, measure from the flange's origin to the point between the fingertips, along the flange's x, y and z axes, in metres. The flange is `link6` on a Metal arm and `link_007` on a Maker arm. Write the three numbers in `arms.<side>.tcp_xyz_m` as `[x, y, z]`. Alternatively, `dreamcli tcp` (step 6) lets you place the point on a 3D view of the arm's URDF; given this same URDF and flange link, the `tcp` it writes is these three numbers. Either way, check the result against the real gripper yourself. The collector refuses to drive a Metal or Maker arm until both arms' `tcp_xyz_m` are filled in.
+
+This point only shapes how the controls feel. The tool poses your Metal or Maker fine-tune trains on come from Dream's own model of the arm (`tools/add_eef.py`).
+
+### Check the arms
+
+```bash
+uv run python scripts/check_arms.py --config configs/my_station.yaml
+```
+
+This only reads the arms. YAM arms float in gravity compensation; MakerMods arms are opened with torque off, so support them. Move each arm by hand and check that the numbers for the right side change.
+
+## 3. The cameras
+
+```bash
+uv run python scripts/check_cameras.py --list
+```
+
+This lists the USB cameras by their stable `/dev/v4l/by-id/...` names and the RealSense cameras by serial number. In your config, give each role its camera:
+
+- `overhead`: a fixed camera that sees the whole workspace.
+- `wrist_l` and `wrist_r`: the left and right wrist cameras.
+
+Use `type: uvc` with a `device` for a webcam, or `type: realsense` with a `serial`. Keep the 1280x720 capture mode if the camera has it. Frames are center-cropped to 16:9 and recorded at `record_width` x `record_height` (640x360). Then look at all three:
+
+```bash
+uv run python scripts/check_cameras.py --config configs/my_station.yaml
+```
+
+Move each camera until its view is what you want; then do not move it again for the rest of the hackathon. The model learns from these exact views.
+
+## 4. The Quest
+
+1. Turn on Developer Mode for the headset in the Meta Horizon phone app (the headset's settings, then Developer Mode).
+2. Plug the headset into the computer with a USB-C cable, put it on, and accept "Allow USB debugging". `adb devices` should list it.
+3. Run `uv run python scripts/check_quest.py`. The first run installs the teleop app on the headset. With the headset on, move the controllers: their positions, grips and triggers print. Press A, B and the right joystick to see them listed.
+
+To work without the cable, run `adb tcpip 5555` while plugged in, unplug, and pass the headset's address: `--ip 192.168.x.y` (`--quest-ip` for `dhk-collect`).
+
+The app reports each controller **relative to the headset**. Turning your head while you hold a grip moves the arm too, so keep your head still and facing the arms while you drive. If the headset goes to sleep when you take it off, cover its proximity sensor (between the lenses) with tape.
+
+## 5. Check the directions with a dry run
+
+```bash
+uv run dhk-collect --config configs/my_station.yaml --dry-run
+```
+
+A dry run reads the arms and the Quest and never commands a motor. Its status line prints, once a second, each arm's tool position in that arm's base frame. Check two things:
+
+1. **The arm model.** With the grips released, the tool positions follow the real arms: move an arm by hand, and its tool position changes the way the arm moved. If a joint turns the wrong way on a Metal or Maker arm, flip its entry in `makermods.joint_signs`.
+2. **The controller directions.** Hold the right grip and move your hand forward, left and up: the right tool's position should move the same way. Then do the same for the left. If an axis is wrong, change that arm's `quest_to_base`. Its rows say which Quest axis becomes the base's x, y and z; the Quest's axes are x right, y up and z toward you. The base frames: on a YAM and a Metal arm, x points forward from the arm, y to its left and z up; on a Maker arm (its URDF), -x points forward, +y up and +z to its left. The shipped configs already map the Quest this way for an operator standing behind the arms.
+
+Then set each arm's `workspace_min_m` and `workspace_max_m`, the box the tool is kept inside, from the positions you saw at the edges of the table.
+
+## 6. The Dream library (for fine-tuning and running models)
+
+Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Install it with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save your API key. Then run `dreamcli setup` for the arm type you have: it is where your model will run from. On Metal and Maker arms it also measures the gripper angles step 2 needs.

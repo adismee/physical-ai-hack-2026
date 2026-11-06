@@ -1,0 +1,158 @@
+"""The collector loop over fake arms and a fake Quest: teleop, recording, dry run, homing and the lag guard."""
+
+import dataclasses
+import pathlib
+
+import dream
+import numpy as np
+from conftest import FLANGE, JOINT_NAMES, arm_urdf
+
+from dream_hackathon import collect, config, dataset, ik, layouts, quest
+
+CONFIGS = pathlib.Path(__file__).resolve().parents[1] / "configs"
+START = np.array([0.0, -0.3, 1.2, 0.6, 0.0, 0.0])  # elbow bent: 5 cm forward is in reach
+
+
+class FakeArms:
+    """Arms that track every command exactly, unless stuck."""
+
+    def __init__(self, energized: bool = True) -> None:
+        self.energized = energized
+        self.start_joints = {side: START.copy() for side in ("left", "right")}
+        self.joints = {side: START.copy() for side in ("left", "right")}
+        self.grips = {"left": 1.0, "right": 1.0}
+        self.commands = 0
+        self.stuck = False
+
+    def read(self):
+        return {side: q.copy() for side, q in self.joints.items()}, dict(self.grips)
+
+    def command(self, joints, grips) -> None:
+        self.commands += 1
+        if not self.stuck:
+            self.joints = {side: q.copy() for side, q in joints.items()}
+            self.grips = dict(grips)
+
+    def close(self) -> None:
+        pass
+
+
+class FakeQuest:
+    """A Quest whose next reading the test sets."""
+
+    def __init__(self) -> None:
+        self.poses = {"left": np.eye(4), "right": np.eye(4)}
+        self.grip = {"left": 0.0, "right": 0.0}
+        self.trigger = {"left": 0.0, "right": 0.0}
+        self.press: set[str] = set()
+
+    def read(self) -> quest.QuestState:
+        pressed, self.press = frozenset(self.press), set()
+        return quest.QuestState(
+            {s: p.copy() for s, p in self.poses.items()}, dict(self.grip), dict(self.trigger), pressed
+        )
+
+
+def _collector(tmp_path: pathlib.Path, arms: FakeArms, headset: FakeQuest, logs: list[str]) -> collect.Collector:
+    station = config.load(CONFIGS / "yam.yaml")
+    # A box large enough that it never clamps the test arm's tool.
+    roomy = {
+        side: dataclasses.replace(arm, workspace_min_m=np.full(3, -2.0), workspace_max_m=np.full(3, 2.0))
+        for side, arm in station.arms.items()
+    }
+    station = dataclasses.replace(
+        station, dataset_dir=tmp_path / "task", record_width=320, record_height=180, arms=roomy
+    )
+    model = ik.urdf_model(arm_urdf(), FLANGE, (0.0, 0.0, 0.08))
+    iks = {side: ik.ArmIK(model, ik.TCP_SITE, JOINT_NAMES, 2.0, 0.02) for side in ("left", "right")}
+    keys = list(layouts.video_keys("yam").values())
+    writer = dataset.DatasetWriter(station.dataset_dir, 30, "yam", [f"v{i}" for i in range(14)], keys, 320, 180)
+    frame = np.zeros((180, 320, 3), np.uint8)
+    frames = lambda: {role: frame for role in layouts.CAMERA_ROLES}  # noqa: E731
+    return collect.Collector(station, "pick up the cube", arms, headset, frames, iks, writer, log=logs.append)
+
+
+def test_a_held_grip_drives_the_tool_with_the_hand(tmp_path: pathlib.Path) -> None:
+    arms, headset = FakeArms(), FakeQuest()
+    collector = _collector(tmp_path, arms, headset, [])
+    solver = collector._iks["right"]
+    before = solver.fk(arms.joints["right"])[:3, 3]
+    headset.grip["right"] = 1.0
+    collector.tick()  # engages at the hand's pose
+    headset.poses["right"][2, 3] = -0.05  # hand 5 cm forward (Quest -z)
+    headset.trigger["right"] = 1.0  # trigger pulled: close the gripper
+    for _ in range(120):
+        collector.tick()
+    after = solver.fk(arms.joints["right"])[:3, 3]
+    np.testing.assert_allclose(after - before, [0.05, 0.0, 0.0], atol=2e-3)
+    np.testing.assert_allclose(arms.joints["left"], START)  # the other arm held still
+    assert arms.grips == {"left": 1.0, "right": 0.0}
+
+
+def test_a_and_a_again_saves_an_episode_dream_accepts(tmp_path: pathlib.Path) -> None:
+    arms, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms, headset, logs)
+    headset.press.add("A")
+    for _ in range(2 * dataset.min_frames(30)):  # 60 Hz loop, every 2nd tick recorded
+        collector.tick()
+    headset.press.add("A")
+    collector.tick()
+    assert collector.episode is None and logs[-1].startswith("saved episode 0")
+    assert dream.datasets.validate_dataset(tmp_path / "task", layouts.embodiment("yam")).ok
+
+
+def test_b_discards_and_a_dry_run_never_records_or_commands(tmp_path: pathlib.Path) -> None:
+    arms, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms, headset, logs)
+    headset.press.add("A")
+    collector.tick()
+    headset.press.add("B")
+    collector.tick()
+    assert collector.episode is None and logs[-1] == "episode discarded"
+
+    dry = FakeArms(energized=False)
+    collector = _collector(tmp_path, dry, headset, logs)
+    headset.press.add("A")
+    headset.grip["left"] = 1.0
+    for _ in range(10):
+        collector.tick()
+    assert collector.episode is None and dry.commands == 0 and "a dry run does not record" in logs
+
+
+def test_homing_returns_to_the_start_but_not_while_recording(tmp_path: pathlib.Path) -> None:
+    arms, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms, headset, logs)
+    collector._command.joints["left"] = START + 0.1
+    headset.press.add("RJ")
+    for _ in range(60):
+        collector.tick()
+    assert not collector.homing
+    np.testing.assert_allclose(arms.joints["left"], START, atol=1e-3)
+    headset.press.add("A")
+    collector.tick()
+    headset.press.add("RJ")
+    collector.tick()
+    assert not collector.homing and "homing is off while recording" in logs[-1]
+
+
+def test_an_arm_that_cannot_follow_is_resynced_and_released(tmp_path: pathlib.Path) -> None:
+    arms, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms, headset, logs)
+    arms.stuck = True
+    collector._command.joints["right"] = START + 0.5
+    collector.tick()
+    np.testing.assert_allclose(collector._command.joints["right"], START)
+    assert "right arm is" in logs[-1]
+
+
+def test_a_dry_run_follows_the_real_arm_until_engaged(tmp_path: pathlib.Path) -> None:
+    dry, headset = FakeArms(energized=False), FakeQuest()
+    collector = _collector(tmp_path, dry, headset, [])
+    dry.joints["left"] = START + 0.2  # moved by hand
+    collector.tick()
+    np.testing.assert_allclose(collector._command.joints["left"], START + 0.2)
+    headset.grip["left"] = 1.0
+    collector.tick()
+    dry.joints["left"] = START  # moved again, but the clutch now drives the (virtual) command
+    collector.tick()
+    np.testing.assert_allclose(collector._command.joints["left"], START + 0.2, atol=1e-3)

@@ -1,0 +1,37 @@
+# Running your model
+
+Your fine-tuned model runs on the arms with `dreamcli`, the Dream library's robot runner: it reads the arms and cameras, asks the model for the next moves and drives the arms, with its own speed and safety limits. It runs from `~/dream-env` on the station's computer. Close `dhk-collect` first: only one program can use the arms at a time.
+
+## 1. Set up the station for dreamcli (once)
+
+Run the setup wizard and pick your arm type (YAM, Metal Arm or Maker Arm):
+
+```bash
+source ~/dream-env/bin/activate
+dreamcli setup
+```
+
+It finds your arms and cameras and saves the station's config (`~/.dreamlabs/station.yaml`). Give each camera the same role it has in your recordings: the overhead camera as the scene (overhead) camera, and the left and right wrist cameras as the left and right wrists. The model learned which view is which, so a swapped camera makes it act on the wrong image.
+
+## 2. Try it without moving the arms
+
+```bash
+# YAM: your fine-tune drives the joints it learned
+dreamcli robot run --checkpoint dream-1-ft:<account>-my-task --task "put the red cube in the bowl" --action-space joint --dry-run
+# Metal or Maker arm: your fine-tune answers tool poses, which dreamcli turns into the arm's joints
+dreamcli robot run --checkpoint dream-1-ft:<account>-my-task --task "put the red cube in the bowl" --dry-run
+```
+
+A dry run calls the model for real and writes nothing to the arms. The first call to a new model waits while the model starts, which can take up to an hour; later calls answer in well under a second. Use the same task text you recorded.
+
+## 3. Run it
+
+With a hand on the emergency stop, run the same command without `--dry-run`. A run starts by moving both arms to the home pose in the station's config.
+
+To start runs from the browser and watch the cameras, use Live View instead: `dreamcli robot up` (on a YAM fine-tune, `dreamcli robot up joint`), then press Start on the platform's Live View page.
+
+## No fine-tune yet
+
+Dream-1's base model runs on YAM, Metal and Maker arms without fine-tuning. Leave out `--checkpoint` (and `--action-space joint`) to run it: `dreamcli robot run --task "..." --dry-run`. It is a good way to check the station while your job trains, and a fallback if it is not done in time.
+
+The Dream docs cover all of this in more depth: [Getting started](https://platform.dreamlabs.ai/api-documentation/), and [Fine-tuning](https://platform.dreamlabs.ai/api-documentation/fine-tuning/), step 8.

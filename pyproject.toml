@@ -1,0 +1,74 @@
+[project]
+name = "dream-hackathon-kit"
+version = "0.1.0"
+description = "Bimanual Meta Quest teleoperation and LeRobot v2.1 recording for YAM and MakerMods arms, ready for Dream API fine-tuning."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+# makermodslab (the MakerMods arms' stack) supports Python 3.12 and 3.13.
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "av>=14",
+    "mink>=0.0.13",
+    "mujoco>=3.3.5",
+    "numpy>=2",
+    "opencv-python>=4.10",
+    "oculus_reader",
+    "pure-python-adb>=0.3.0.dev0",
+    "pyarrow>=17",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+# One station drives one arm family; the two extras are never installed together (see [tool.uv] conflicts).
+yam = ["i2rt"]
+makermods = ["MakerModsLab"]
+realsense = ["pyrealsense2>=2.55"]
+
+[project.scripts]
+dhk-collect = "dream_hackathon.collect:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    # The dataset checks Dream runs before an upload, run locally by the tests (nothing is sent).
+    "dreamlabs-client[datasets]>=1.0.5",
+]
+# Dream's IK, for the add-eef test; the same library contestants install in ~/dream-env.
+dream = ["dreamlabs>=1.0.11"]
+
+[tool.uv]
+# A station installs one arm family; the dream group is ~/dream-env's library, which pins its own i2rt and tyro.
+conflicts = [
+    [{ extra = "yam" }, { extra = "makermods" }],
+    [{ extra = "yam" }, { group = "dream" }],
+    [{ extra = "makermods" }, { group = "dream" }],
+]
+# i2rt needs ruckig 0.15.3, published only as source, whose build fails under scikit-build-core >= 0.10 (i2rt's own
+# pyproject.toml carries the same constraint).
+build-constraint-dependencies = ["scikit-build-core<0.10"]
+
+[tool.uv.sources]
+# Pinned commits of the vendors' public SDKs.
+i2rt = { git = "https://github.com/i2rt-robotics/i2rt.git", rev = "fe78bae67334b9af0b79833dd8ba141a61767f2a" }
+MakerModsLab = { git = "https://github.com/makermods-robotics/makermodslab.git", rev = "e377149419eebef7fa0f694b0d616c9c2cd46231" }
+# The Quest app (APK) is stored with git LFS: install git-lfs first (docs/hardware_setup.md).
+oculus_reader = { git = "https://github.com/rail-berkeley/oculus_reader.git", rev = "2cf70ab489348f68a25a40e0ce0878de3f587c3a", lfs = true }
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dream_hackathon"]
+
+[tool.ruff]
+line-length = 119
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
