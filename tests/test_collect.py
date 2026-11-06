@@ -218,3 +218,10 @@ def test_the_task_falls_back_to_a_neutral_text():
     assert collect.choose_task(None, "from the config") == "from the config"
     assert collect.choose_task("  ", None) == collect.DEFAULT_TASK
     assert collect.DEFAULT_TASK.strip()
+
+
+def test_a_missing_tool_center_point_is_one_line_not_a_traceback(tmp_path: pathlib.Path) -> None:
+    path = filled_template("maker", tmp_path)  # the template leaves tcp_xyz_m empty, for the organizer to measure
+    with pytest.raises(SystemExit) as stopped:
+        collect.main(["--config", str(path), "--dataset-dir", str(tmp_path / "data")])
+    assert str(stopped.value.code).startswith("config: 'arms.left.tcp_xyz_m' is not set")

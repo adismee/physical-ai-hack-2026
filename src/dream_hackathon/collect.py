@@ -705,6 +705,10 @@ def main(argv: list[str] | None = None) -> None:
         )
     except (station_lock.StationBusyError, quest.QuestError, arms.ArmsError) as error:
         sys.exit(str(error))
+    except config.ConfigError as error:  # what the arm model needs, e.g. a Metal or Maker arm's tool center point
+        sys.exit(f"config: {error}")
+    except dataset.DatasetError as error:  # a --dataset-dir recorded another way (rate, cameras, version)
+        sys.exit(f"dataset: {error}")
 
 
 if __name__ == "__main__":
