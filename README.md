@@ -80,6 +80,7 @@ No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --si
 | `src/dream_hackathon/quest.py`, `teleop.py`, `ik.py` | Quest input, the clutched hand-to-tool mapping, and the teleop IK |
 | `src/dream_hackathon/cameras.py`, `dataset.py` | Camera capture and the LeRobot v2.1 writer |
 | `src/dream_hackathon/dashboard.py`, `dataset_cli.py` | The browser dashboard (over SSH) and `dhk-dataset` (list and drop episodes) |
+| `src/dream_hackathon/devices.py` | Each device's state and its fix (Quest, cameras, the arms' links), for the dashboard and the terminal |
 | `src/dream_hackathon/station_lock.py` | One program drives the arms at a time (shared with `dreamcli`) |
 | `src/dream_hackathon/embodiments/` | The Dream embodiment configs your fine-tunes are registered with |
 | `configs/` | One template station config per arm type; a station's own is `configs/station.yaml` (not committed) |
