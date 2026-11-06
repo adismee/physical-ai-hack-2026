@@ -57,7 +57,15 @@ sudo ip link set can_follower_l up type can bitrate 1000000
 sudo ip link set can_follower_r up type can bitrate 1000000
 ```
 
-If `ip -br link show type can` still lists `can0` and `can1`, reboot instead (the rule applies at boot), then run the last two lines. The links come up down after every reboot: bring them up again with the last two lines (`dreamcli robot up` does this for its own runs), or see i2rt's README to bring them up on every boot. In your config, `arms.left.port` and `arms.right.port` are these names, and `yam.gripper` is your gripper type (`linear_4310` for the stock gripper).
+If `ip -br link show type can` still lists `can0` and `can1`, reboot instead (the rule applies at boot), then run the last two lines.
+
+Let the dashboard bring the links up, so nobody needs `sudo` after a reboot. This allows the station's account to run exactly `ip link set <link> up type can bitrate 1000000` for its two links without a password, and nothing else (`scripts/wipe_station.sh` removes it):
+
+```bash
+bash scripts/allow_can_bringup.sh       # the links can_follower_l and can_follower_r; name others as arguments
+```
+
+The dashboard then shows a "Bring ... up" button on a link that is down. The links come up down after every reboot: bring them up again with the last two lines (`dreamcli robot up` does this for its own runs), or see i2rt's README to bring them up on every boot. In your config, `arms.left.port` and `arms.right.port` are these names, and `yam.gripper` is your gripper type (`linear_4310` for the stock gripper).
 
 When the collector opens a YAM arm, i2rt holds it where it is. It also sweeps each linear gripper with a small force to find its travel, so keep fingers clear of the jaws.
 

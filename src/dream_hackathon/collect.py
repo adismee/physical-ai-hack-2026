@@ -369,12 +369,17 @@ def _run_locked(
     def frames() -> dict[str, npt.NDArray[np.uint8]]:
         return {role: frame(role) for role in layouts.CAMERA_ROLES}
 
-    board = _open_dashboard(station, frame, port)
-
     def log(line: str) -> None:
         _say(line)
         if board is not None:
             board.event(line)
+
+    def fix(fix_id: str) -> tuple[bool, str]:
+        ok, message = devices.apply_fix(station, fix_id)
+        log(f"dashboard: {message}")
+        return ok, message
+
+    board = _open_dashboard(station, frame, port, on_fix=fix)
 
     monitor = None
     try:
@@ -530,7 +535,10 @@ def _report(statuses: list[devices.Status], reported: dict[str, str | None], log
 
 
 def _open_dashboard(
-    station: config.StationConfig, frame: Callable[[str], npt.NDArray[np.uint8]], port: int
+    station: config.StationConfig,
+    frame: Callable[[str], npt.NDArray[np.uint8]],
+    port: int,
+    on_fix: Callable[[str], tuple[bool, str]] | None = None,
 ) -> dashboard.Dashboard | None:
     """Starts the dashboard and says how to open it; a taken port leaves the session without one."""
     if not port:
@@ -542,6 +550,7 @@ def _open_dashboard(
             layouts.video_keys(station.family),
             station.dataset_dir,
             title=f"{socket.gethostname()}: {station.arm} station",
+            on_fix=on_fix,
         )
     except OSError as error:
         _say(

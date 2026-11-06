@@ -350,3 +350,56 @@ def test_a_realsense_that_is_not_connected_is_never_started(monkeypatch):
     fake.connected.append("222")
     cameras._RealSenseReader(cfg)
     assert fake.started == ["222"]
+
+
+# --- the dashboard's fix: bring a CAN link up
+
+
+class FakeRun:
+    """subprocess.run for `sudo -n ip link set ...`: records the command and answers as the test says."""
+
+    def __init__(self, returncode: int = 0, stderr: str = "") -> None:
+        self.commands: list[list[str]] = []
+        self.returncode, self.stderr = returncode, stderr
+
+    def __call__(self, command, **kwargs):
+        self.commands.append(command)
+        return __import__("subprocess").CompletedProcess(command, self.returncode, "", self.stderr)
+
+
+def test_a_down_can_link_offers_its_fix_and_the_fix_brings_it_up(tmp_path):
+    station = Station(tmp_path)
+    (station.sys_net / "can_follower_r" / "flags").write_text("0x80\n")
+    station.found.try_open()
+    by_name = {status.name: status for status in station.found.statuses()}
+    assert by_name["right arm link"].fix == "can-up:can_follower_r"
+    assert by_name["right arm link"].fix_label == "Bring can_follower_r up"
+    assert by_name["left arm link"].fix is None  # up already: nothing to offer
+
+    run = FakeRun()
+    ok, message = devices.apply_fix(station.config, "can-up:can_follower_r", station.sys_net, run)
+    assert ok and message == "brought can_follower_r up"
+    assert run.commands[0][:2] == ["sudo", "-n"]
+    assert run.commands[0][3:] == ["link", "set", "can_follower_r", "up", "type", "can", "bitrate", "1000000"]
+
+
+def test_the_fix_refuses_anything_but_bringing_a_down_arm_link_up(tmp_path):
+    station = Station(tmp_path)
+    run = FakeRun()
+    assert devices.apply_fix(station.config, "can-up:eth0", station.sys_net, run) == (
+        False,
+        "'eth0' is not one of this station's arm links",
+    )
+    ok, message = devices.apply_fix(station.config, "can-up:can_follower_l", station.sys_net, run)
+    assert ok and "nothing to bring up" in message  # already up: never touched
+    assert not devices.apply_fix(station.config, "can-down:can_follower_l", station.sys_net, run)[0]
+    assert run.commands == []
+
+
+def test_a_station_without_the_sudo_rule_gets_the_command_to_type(tmp_path):
+    station = Station(tmp_path)
+    (station.sys_net / "can_follower_l" / "flags").write_text("0x80\n")
+    run = FakeRun(returncode=1, stderr="sudo: a password is required\n")
+    ok, message = devices.apply_fix(station.config, "can-up:can_follower_l", station.sys_net, run)
+    assert not ok and "sudo ip link set can_follower_l up type can bitrate 1000000" in message
+    assert "allow_can_bringup.sh" in message

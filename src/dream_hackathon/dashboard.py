@@ -10,7 +10,10 @@ ssh -L 8080:localhost:8080 <user>@<station>
 The page shows the three cameras as they are recorded, every device's state with the fix for one that is not ready
 (the Quest, each camera, each arm's link), what the session is waiting for, whether an episode is recording, each
 arm's clutch and tool position, warnings, the session's events, and the dataset's episodes with their videos to play
-back. It only reads: nothing on it drives the arms or changes the dataset. `scripts/check_cameras.py` serves the same page with the
+back. Its one action is a device's fix, which only `dhk-collect` offers: a button that brings a CAN link up when it
+is down (devices.apply_fix()). Nothing on it drives the arms or changes the dataset. A fix is taken only from the
+page itself (a custom header, and an `Origin` that matches the page's address), so no other website open in the
+same browser can send one through the SSH tunnel. `scripts/check_cameras.py` serves the same page with the
 cameras alone.
 
 @see Dashboard
@@ -55,6 +58,7 @@ class Dashboard:
         video_keys: dict[str, str],
         dataset_root: pathlib.Path | None,
         title: str,
+        on_fix: Callable[[str], tuple[bool, str]] | None = None,
     ) -> None:
         """Starts serving.
 
@@ -63,12 +67,15 @@ class Dashboard:
         @param video_keys Each camera role's dataset video key, to find the episodes' videos.
         @param dataset_root The dataset whose episodes the page lists, or None.
         @param title The page's heading, e.g. the station's name.
+        @param on_fix Runs a device's fix by its id (devices.Status.fix), returning whether it worked and what happened;
+            None offers no fixes.
         @throws OSError The port is taken.
         """
         self._frame = frame
         self._video_keys = video_keys
         self._dataset_root = dataset_root
         self._title = title
+        self._on_fix = on_fix
         self._lock = threading.Lock()
         self._snapshot: dict[str, Any] = {}
         self._devices: list[dict[str, Any]] = []
@@ -169,6 +176,25 @@ def _handler_for(board: Dashboard) -> type[http.server.BaseHTTPRequestHandler]:
                     self._send_file(video)
             else:
                 self._send(404, "text/plain", b"not found")
+
+        def do_POST(self) -> None:  # noqa: N802 - the name http.server calls
+            if self.path.split("?", 1)[0] != "/api/fix" or board._on_fix is None:
+                self._send(404, "text/plain", b"not found")
+                return
+            # Only the page itself: a custom header (which another site's page cannot add without a preflight this
+            # server never answers) and, when the browser sends one, an Origin naming this page's address.
+            origin = self.headers.get("Origin")
+            if self.headers.get("X-Dashboard") != "1" or (origin and origin != f"http://{self.headers.get('Host')}"):
+                self._send(403, "text/plain", b"fixes are taken from the dashboard page only")
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                fix = json.loads(self.rfile.read(min(length, 4096)) or b"{}").get("fix", "")
+            except (ValueError, AttributeError):
+                self._send(400, "text/plain", b'expected {"fix": "<id>"}')
+                return
+            ok, message = board._on_fix(str(fix))
+            self._send_json({"ok": ok, "message": message})
 
         def _camera(self, role: str) -> None:
             if role not in board._video_keys:
@@ -278,6 +304,10 @@ PAGE = """<!doctype html>
   .device.bad { border-color: var(--rec); }
   .device.bad .name::before { content: "\\25CF  "; color: var(--rec); }
   .device .problem { color: var(--rec); margin-top: 2px; }
+  .device button { margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+                   background: var(--bg); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  .device button:disabled { opacity: .6; cursor: default; }
+  .device .result { margin-top: 6px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -343,6 +373,16 @@ const BANNERS = {
   ready: "Everything is ready: press A on the right controller to open the arms.",
   opening: "Opening the arms...",
 };
+const fixResults = {}, fixesRunning = new Set();
+async function runFix(id) {
+  fixesRunning.add(id); fixResults[id] = "working...";
+  try {
+    const reply = await fetch("/api/fix", {method: "POST", headers: {"Content-Type": "application/json", "X-Dashboard": "1"},
+                                           body: JSON.stringify({fix: id})});
+    fixResults[id] = reply.ok ? (await reply.json()).message : `refused (${reply.status}): ${await reply.text()}`;
+  } catch (e) { fixResults[id] = "could not reach the station"; }
+  fixesRunning.delete(id);
+}
 function renderDevices(status) {
   const phase = status.phase || "";
   $("banner").className = phase;
@@ -354,6 +394,14 @@ function renderDevices(status) {
     const name = document.createElement("div"); name.className = "name"; name.textContent = d.name + (d.ok ? ": ready" : "");
     div.appendChild(name);
     if (!d.ok) { const p = document.createElement("div"); p.className = "problem"; p.textContent = d.problem; div.appendChild(p); }
+    if (d.fix) {
+      const button = document.createElement("button");
+      button.textContent = d.fix.label; button.disabled = fixesRunning.has(d.fix.id);
+      button.addEventListener("click", () => runFix(d.fix.id));
+      div.appendChild(button);
+    }
+    const result = d.fix ? fixResults[d.fix.id] : null;
+    if (result) { const r = document.createElement("div"); r.className = "result"; r.textContent = result; div.appendChild(r); }
     $("devices").appendChild(div);
   });
 }

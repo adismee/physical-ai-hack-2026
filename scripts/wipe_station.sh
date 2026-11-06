@@ -30,6 +30,7 @@ home_paths=(
   "$HOME/.dreamlabs"
   "$HOME/hackathon_data"
   "$HOME/.cache/dream_hackathon"
+  "$HOME/.local/share/dream_hackathon"
   "$HOME/.cache/dream_ik"
   "$HOME/.cache/uv"
   "$HOME/.local/share/uv"
@@ -47,6 +48,9 @@ home_paths=(
   "$HOME/.config/fish/conf.d/uv.env.fish"  # uv's PATH line for the fish shell
 )
 system_files=(/etc/udev/rules.d/90-dreamlabs-can.rules /etc/udev/rules.d/90-can.rules /etc/udev/rules.d/90-quest-adb.rules)
+# The sudo rule scripts/allow_can_bringup.sh installs; it also leaves a marker, in case /etc/sudoers.d is not readable.
+sudo_rule=/etc/sudoers.d/90-dream-hackathon-can
+sudo_rule_marker="$HOME/.local/share/dream_hackathon/can-sudo-rule"
 apt_packages=(build-essential python3-dev curl adb tmux git-lfs python3-pip)
 profiles=("$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.zshenv")
 uv_line='. "$HOME/.local/bin/env"'
@@ -66,6 +70,10 @@ for file in "${system_files[@]}"; do
     echo "  (sudo)	$file"
   fi
 done
+if [ -e "$sudo_rule" ] || [ -e "$sudo_rule_marker" ]; then
+  system_found+=("$sudo_rule")
+  echo "  (sudo)	$sudo_rule (lets this account bring the CAN links up without a password)"
+fi
 profile_found=()
 for profile in "${profiles[@]}"; do
   if [ -f "$profile" ] && grep -qxF "$uv_line" "$profile"; then

@@ -84,8 +84,8 @@ def test_the_page_gets_each_devices_state_and_the_phase(board: dashboard.Dashboa
     state = json.loads(_get(board, "/api/status")[1])
     assert state["phase"] == "waiting"
     assert state["devices"] == [
-        {"name": "Quest", "ok": True, "problem": ""},
-        {"name": "camera wrist_l", "ok": False, "problem": "no frame for 3 s; check its USB cable"},
+        {"name": "Quest", "ok": True, "problem": "", "fix": None},
+        {"name": "camera wrist_l", "ok": False, "problem": "no frame for 3 s; check its USB cable", "fix": None},
     ]
     page = _get(board, "/")[1].decode()
     assert 'id="devices"' in page and "press A on the right controller" in page
@@ -95,3 +95,40 @@ def test_the_page_has_no_control_characters(board: dashboard.Dashboard) -> None:
     page = _get(board, "/")[1].decode()
     assert "\\25CF" in page  # the CSS escape of the status dot, as the browser must get it
     assert not any(ord(char) < 32 and char not in "\n\t" for char in page)
+
+
+def _post(board: dashboard.Dashboard, body: bytes, headers: dict[str, str]) -> tuple[int, bytes]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{board.port}/api/fix", data=body, headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+
+
+def test_a_fix_is_taken_from_the_page_only(tmp_path: pathlib.Path) -> None:
+    asked = []
+    board = dashboard.Dashboard(
+        0,
+        lambda role: np.zeros((180, 320, 3), np.uint8),
+        layouts.video_keys("yam"),
+        None,
+        title="test station",
+        on_fix=lambda fix: asked.append(fix) or (True, f"ran {fix}"),
+    )
+    try:
+        body = json.dumps({"fix": "can-up:can_follower_l"}).encode()
+        own = f"http://127.0.0.1:{board.port}"
+        assert _post(board, body, {"Content-Type": "application/json"})[0] == 403  # no X-Dashboard header
+        assert _post(board, body, {"X-Dashboard": "1", "Origin": "https://example.com"})[0] == 403  # another site
+        status, reply = _post(board, body, {"X-Dashboard": "1", "Origin": own})
+        assert status == 200 and json.loads(reply) == {"ok": True, "message": "ran can-up:can_follower_l"}
+        assert asked == ["can-up:can_follower_l"]
+    finally:
+        board.close()
+
+
+def test_a_page_without_fixes_refuses_them(board: dashboard.Dashboard) -> None:
+    assert _post(board, b'{"fix": "can-up:x"}', {"X-Dashboard": "1"})[0] == 404

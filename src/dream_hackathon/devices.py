@@ -5,12 +5,19 @@ ready (DeviceSet.try_open()), and shows every device's state on the page and in 
 The checks here open nothing: the Quest is read through `adb devices`, the arms' links through `/sys/class/net` (CAN)
 or `/dev` (a serial adapter), so they can run every second, during a session too.
 
-@see Status, DeviceSet
+One problem has a fix the dashboard can run: a CAN link that is down (as the links are after every reboot) gets a
+button that brings it up (apply_fix()). It runs `sudo -n ip link set <link> up type can bitrate 1000000`, which
+`scripts/allow_can_bringup.sh` lets the station's account run without a password, and nothing else; it never takes
+a link down, which would cut open arms off from their motors.
+
+@see Status, DeviceSet, apply_fix()
 """
 
 import dataclasses
 import os
 import pathlib
+import shutil
+import subprocess
 from collections.abc import Callable
 from typing import Any
 
@@ -24,6 +31,10 @@ _IFF_UP = 0x1
 QUEST_LOST_AFTER_S = 2.0
 ## A camera with no new frame for this long is shown as a problem (a shorter gap is a hiccup).
 CAMERA_LOST_AFTER_S = 1.0
+## The arms' CAN bit rate.
+CAN_BITRATE = 1_000_000
+## The fix id of bringing a CAN link up: this prefix, then the link's name.
+CAN_UP_FIX = "can-up:"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -33,13 +44,30 @@ class Status:
     Attributes:
     - name: What it is, e.g. `Quest`, `camera wrist_l`, `left arm link`.
     - problem: What is wrong and what to do about it, or None when it is ready.
+    - fix: The id of a fix the dashboard can run for it (apply_fix()), or None.
+    - fix_label: The fix's button text.
     """
 
     name: str
     problem: str | None = None
+    fix: str | None = None
+    fix_label: str = ""
 
     def to_json(self) -> dict[str, Any]:
-        return {"name": self.name, "ok": self.problem is None, "problem": self.problem or ""}
+        fix = {"id": self.fix, "label": self.fix_label} if self.fix else None
+        return {"name": self.name, "ok": self.problem is None, "problem": self.problem or "", "fix": fix}
+
+
+def can_link_state(port: str, sys_net: pathlib.Path = SYS_NET) -> str:
+    """`missing` (no link of that name), `down` (not brought up), `no carrier` (up, but no arm answers) or `up`."""
+    link = sys_net / port
+    if not link.exists():
+        return "missing"
+    if not int((link / "flags").read_text().strip(), 16) & _IFF_UP:
+        return "down"
+    if (link / "operstate").read_text().strip() not in ("up", "unknown"):
+        return "no carrier"
+    return "up"
 
 
 def can_link_problem(port: str, sys_net: pathlib.Path = SYS_NET) -> str | None:
@@ -47,19 +75,19 @@ def can_link_problem(port: str, sys_net: pathlib.Path = SYS_NET) -> str | None:
 
     The links come up down after every reboot, and are named by the setup's udev rule (docs/hardware_setup.md).
     """
-    link = sys_net / port
-    if not link.exists():
+    state = can_link_state(port, sys_net)
+    if state == "missing":
         others = sorted(path.name for path in sys_net.glob("can*")) if sys_net.exists() else []
         return (
             f"there is no CAN link named {port} (this computer has {', '.join(others) or 'none'}): if it lists "
             'can0 and can1, apply the setup\'s CAN names (docs/hardware_setup.md, "YAM arms"), or call the organizers'
         )
-    if not int((link / "flags").read_text().strip(), 16) & _IFF_UP:
+    if state == "down":
         return (
             f"CAN link {port} is down, as the links are after every reboot: "
-            f"sudo ip link set {port} up type can bitrate 1000000"
+            f"sudo ip link set {port} up type can bitrate {CAN_BITRATE}"
         )
-    if (link / "operstate").read_text().strip() not in ("up", "unknown"):
+    if state == "no carrier":
         return f"CAN link {port} is up but hears no arm: check that the arm is powered and its CAN cable is plugged in"
     return None
 
@@ -76,10 +104,52 @@ def serial_port_problem(port: str) -> str | None:
 def arm_link_problem(station: config.StationConfig, side: str, sys_net: pathlib.Path = SYS_NET) -> str | None:
     """What keeps one arm's link (its CAN interface or its serial adapter) from being used, or None."""
     port = station.arms[side].port
-    over_socketcan = station.family == "yam" or (
+    return can_link_problem(port, sys_net) if over_socketcan(station) else serial_port_problem(port)
+
+
+def over_socketcan(station: config.StationConfig) -> bool:
+    """Whether the arms' links are CAN interfaces (a YAM's, or a MakerMods station set to socketcan)."""
+    return station.family == "yam" or (
         station.makermods is not None and station.makermods.can_interface == "socketcan"
     )
-    return can_link_problem(port, sys_net) if over_socketcan else serial_port_problem(port)
+
+
+def apply_fix(
+    station: config.StationConfig,
+    fix: str,
+    sys_net: pathlib.Path = SYS_NET,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> tuple[bool, str]:
+    """Runs a fix the dashboard offers (Status.fix); the only one brings one of the station's CAN links up.
+
+    It refuses anything else: a link that is not one of this station's arms', or one that is not down right now (it
+    never takes a link down, which would cut open arms off from their motors).
+
+    @return Whether it worked, and what happened, in words for the page and the terminal.
+    """
+    if not fix.startswith(CAN_UP_FIX):
+        return False, f"unknown fix {fix!r}"
+    port = fix.removeprefix(CAN_UP_FIX)
+    if not over_socketcan(station) or port not in {arm.port for arm in station.arms.values()}:
+        return False, f"{port!r} is not one of this station's arm links"
+    state = can_link_state(port, sys_net)
+    if state != "down":
+        return state == "up", f"{port} is {state}: nothing to bring up"
+    ip = shutil.which("ip") or "/usr/sbin/ip"
+    command = ["sudo", "-n", ip, "link", "set", port, "up", "type", "can", "bitrate", str(CAN_BITRATE)]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"could not bring {port} up: {error}"
+    if result.returncode == 0:
+        return True, f"brought {port} up"
+    if "password" in result.stderr:
+        return False, (
+            f"could not bring {port} up: this station asks for a password, so run "
+            f"`sudo ip link set {port} up type can bitrate {CAN_BITRATE}` in a terminal (organizers: "
+            "`bash scripts/allow_can_bringup.sh` makes this button work)"
+        )
+    return False, f"could not bring {port} up: {result.stderr.strip() or f'exit {result.returncode}'}"
 
 
 def quest_problem(adb_devices_output: str) -> str | None:
@@ -172,7 +242,17 @@ class DeviceSet:
             problem = camera.problem(CAMERA_LOST_AFTER_S) if camera is not None else self._camera_errors.get(cfg.role)
             found.append(Status(f"camera {cfg.role}", problem or (None if camera is not None else "not open yet")))
         for side in ("left", "right"):
-            found.append(Status(f"{side} arm link", arm_link_problem(self._station, side, self._sys_net)))
+            port = self._station.arms[side].port
+            problem = arm_link_problem(self._station, side, self._sys_net)
+            can_up = over_socketcan(self._station) and can_link_state(port, self._sys_net) == "down"
+            found.append(
+                Status(
+                    f"{side} arm link",
+                    problem,
+                    fix=f"{CAN_UP_FIX}{port}" if can_up else None,
+                    fix_label=f"Bring {port} up" if can_up else "",
+                )
+            )
         return found
 
     def close(self) -> None:
