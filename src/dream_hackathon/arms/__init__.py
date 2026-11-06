@@ -24,6 +24,10 @@ Joints = dict[str, npt.NDArray[np.float64]]
 Grips = dict[str, float]
 
 
+class ArmsError(RuntimeError):
+    """The arms cannot be opened yet; the message says why and what to do."""
+
+
 class Arms(Protocol):
     """Both arms of a station.
 

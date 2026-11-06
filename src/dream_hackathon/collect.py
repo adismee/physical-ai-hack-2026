@@ -522,7 +522,7 @@ def main(argv: list[str] | None = None) -> None:
             quest_ip=args.quest_ip,
             dashboard_port=args.dashboard_port,
         )
-    except (station_lock.StationBusyError, quest.QuestError) as error:
+    except (station_lock.StationBusyError, quest.QuestError, arms.ArmsError) as error:
         sys.exit(str(error))
 
 

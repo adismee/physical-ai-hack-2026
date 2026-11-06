@@ -11,14 +11,42 @@ compensation instead: they float, and can be moved by hand.
 @see YamArms
 """
 
+import pathlib
+
 import mujoco
 import numpy as np
 
 from dream_hackathon import config, ik
-from dream_hackathon.arms import Grips, Joints
+from dream_hackathon.arms import ArmsError, Grips, Joints
 
 ## The six arm joints in i2rt's model, base to wrist.
 JOINT_NAMES = tuple(f"joint{i}" for i in range(1, 7))
+## Where Linux lists the network links, the CAN ones among them.
+SYS_NET = pathlib.Path("/sys/class/net")
+## The `flags` bit of a link that has been brought up (IFF_UP).
+_IFF_UP = 0x1
+
+
+def can_link_problem(port: str, sys_net: pathlib.Path = SYS_NET) -> str | None:
+    """What keeps an arm's CAN link from being used, with the command that fixes it, or None when it is ready.
+
+    The links come up down after every reboot, and are named by the setup's udev rule (docs/hardware_setup.md).
+    """
+    link = sys_net / port
+    if not link.exists():
+        others = sorted(path.name for path in sys_net.glob("can*")) if sys_net.exists() else []
+        return (
+            f"there is no CAN link named {port} (this computer has {', '.join(others) or 'none'}): if it lists "
+            'can0 and can1, apply the setup\'s CAN names (docs/hardware_setup.md, "YAM arms"), or call the organizers'
+        )
+    if not int((link / "flags").read_text().strip(), 16) & _IFF_UP:
+        return (
+            f"CAN link {port} is down, as the links are after every reboot: "
+            f"sudo ip link set {port} up type can bitrate 1000000"
+        )
+    if (link / "operstate").read_text().strip() not in ("up", "unknown"):
+        return f"CAN link {port} is up but hears no arm: check that the arm is powered and its CAN cable is plugged in"
+    return None
 
 
 class YamArms:
@@ -35,6 +63,12 @@ class YamArms:
         from i2rt.robots.utils import GripperType
 
         assert station.yam is not None
+        if not sim:
+            problems = [
+                problem for side in ("left", "right") if (problem := can_link_problem(station.arms[side].port))
+            ]
+            if problems:
+                raise ArmsError("the arms cannot be opened yet:\n  " + "\n  ".join(problems))
         gripper = GripperType.from_string_name(station.yam.gripper)
         self.energized = energize
         self._robots = {}

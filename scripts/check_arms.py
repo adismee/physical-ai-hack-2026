@@ -28,7 +28,10 @@ def main() -> None:
         lock = station_lock.acquire("scripts/check_arms.py")
     except station_lock.StationBusyError as error:
         raise SystemExit(str(error)) from None
-    robot = arms.open_arms(station, energize=False)
+    try:
+        robot = arms.open_arms(station, energize=False)
+    except arms.ArmsError as error:
+        raise SystemExit(str(error)) from None
     try:
         while True:
             joints, grips = robot.read()
