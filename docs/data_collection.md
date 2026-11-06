@@ -10,7 +10,9 @@ Your station is already set up; this is where you start. You teach the model by 
    ssh -L 8080:localhost:8080 <user>@<station>
    ```
 
-2. **On the station**, in the terminal that opened, start a tmux session (or rejoin yours), so a dropped connection does not end it:
+   Replace `<user>@<station>` with your station's login, which the organizers give you (for example `team3@10.0.0.13`): typed as is, the shell reads `<` and `>` as redirections and says `parse error near '\n'`. Run this line on its own and wait for the station's prompt (`<user>@<station-name>:~$`) before typing anything else; it may ask for the station's password first.
+
+2. **On the station**, at that prompt (tmux is on the station; your laptop does not need it), start a tmux session (or rejoin yours), so a dropped connection does not end it:
 
    ```bash
    tmux new -A -s collect
@@ -57,7 +59,7 @@ The station has no screen. Connect from your laptop with the dashboard's port fo
 ssh -L 8080:localhost:8080 <user>@<station>
 ```
 
-Then, on the station, start a tmux session, so that a dropped Wi-Fi connection does not end your session:
+Replace `<user>@<station>` with your station's login, which the organizers give you (for example `team3@10.0.0.13`): typed as is, the shell reads `<` and `>` as redirections and says `parse error near '\n'`. Run this line on its own and wait for the station's prompt (`<user>@<station-name>:~$`) before typing anything else; it may ask for the station's password first. Then, on the station, start a tmux session, so that a dropped Wi-Fi connection does not end your session:
 
 ```bash
 tmux new -A -s collect          # after a drop, reconnect from the laptop and run the same line to get back to it

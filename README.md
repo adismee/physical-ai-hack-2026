@@ -26,7 +26,7 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
    ssh -L 8080:localhost:8080 <user>@<station>
    ```
 
-   Then on the station, in the terminal that opened:
+   Put your station's login (from the organizers) in place of `<user>@<station>`, and wait for the station's prompt before going on. Then on the station, at that prompt:
 
    ```bash
    tmux new -A -s collect                          # keeps the session running if your connection drops
