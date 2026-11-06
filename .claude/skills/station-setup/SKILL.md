@@ -33,7 +33,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 3. The Dream library
 
-1. Check that `~/dream-env/bin/dreamcli` and `~/.dreamlabs/credentials` exist. Never print the credentials. If either is missing, the organizer runs the two steps on the Dream Getting started page (https://platform.dreamlabs.ai/api-documentation/) with the team's API key.
+1. Check that `~/dream-env/bin/dreamcli` and `~/.dreamlabs/credentials` exist. Never print the credentials. If either is missing, the organizer installs pip (`sudo apt install python3-pip`; the Dream install uses it), then runs the two steps on the Dream Getting started page (https://platform.dreamlabs.ai/api-documentation/) with the team's API key.
 2. The organizer runs `dreamcli setup` for this arm type (rule 1: you never run it). It writes `~/.dreamlabs/station.yaml`. During its camera step, they give each camera the same role as in `configs/station.yaml`.
 
 ## 4. Metal and Maker arms only

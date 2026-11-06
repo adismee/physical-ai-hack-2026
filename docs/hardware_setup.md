@@ -123,7 +123,7 @@ Then set each arm's `workspace_min_m` and `workspace_max_m`, the box the tool is
 
 ## 6. The Dream library (for fine-tuning and running models)
 
-Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Install it with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save the API key the participants' jobs run under. Then run `dreamcli setup` for the arm type you have: participants' models run from the config it writes. On Metal and Maker arms it also measures the gripper angles step 2 needs.
+Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Its install uses pip, which Ubuntu does not come with, so install that first: `sudo apt install python3-pip`. Then install the library with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save the API key the participants' jobs run under. Then run `dreamcli setup` for the arm type you have: participants' models run from the config it writes. On Metal and Maker arms it also measures the gripper angles step 2 needs.
 
 ## 7. Access for participants
 
