@@ -4,9 +4,9 @@ Run it in ~/dream-env (the Dream library's environment, with your API key saved 
 
 ```
 # YAM: the collected dataset as it is
-~/dream-env/bin/python tools/finetune.py ~/hackathon_data/my-task --arm yam --name my-task-1 --suffix my-task
+~/dream-env/bin/python tools/finetune.py ~/hackathon_data/cubes --arm yam --name cubes --suffix cubes
 # Metal or Maker arm: the dataset tools/add_eef.py wrote
-~/dream-env/bin/python tools/finetune.py ~/hackathon_data/my-task-eef --arm metal --name my-task-1 --suffix my-task
+~/dream-env/bin/python tools/finetune.py ~/hackathon_data/cubes-eef --arm metal --name cubes --suffix cubes
 ```
 
 The steps: register your robot's embodiment (once; reused after), check the dataset on this computer, upload it,

@@ -51,6 +51,25 @@ def test_adds_dreams_tool_poses(tmp_path: pathlib.Path, arm: str, kinematics: st
         np.testing.assert_allclose(
             state[:, slice(*spans[f"{side}_grip"])], np.clip(raw[:, i * 7 + 6 : i * 7 + 7] / scale, 0, 1), atol=1e-6
         )
-    # Videos are shared, not rewritten.
+    # Videos are shared, not rewritten; the collected dataset is left exactly as it was.
     video = "videos/chunk-000/observation.images.scene/episode_000000.mp4"
     assert (target / video).stat().st_ino == (source / video).stat().st_ino
+    assert json.loads((source / "meta" / "info.json").read_text())["features"]["action"]["shape"] == [14]
+    stats = [json.loads(line) for line in (source / "meta" / "episodes_stats.jsonl").read_text().splitlines()]
+    assert len(stats[0]["stats"]["action"]["mean"]) == 14
+
+
+def test_replace_rebuilds_only_a_dataset(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "task"
+    write_episodes(source, "makermods", episodes=1, frames=50, tasks=["fold the towel"])
+    target = tmp_path / "task-eef"
+    add_eef.convert(source, target, "metal")
+    with pytest.raises(SystemExit, match="--replace"):
+        add_eef.convert(source, target, "metal")
+    write_episodes(source, "makermods", episodes=1, frames=50, tasks=["fold the towel"])
+    add_eef.convert(source, target, "metal", replace=True)
+    assert json.loads((target / "meta" / "info.json").read_text())["total_episodes"] == 2
+    other = tmp_path / "notes"
+    other.mkdir()
+    with pytest.raises(SystemExit, match="not a dataset"):
+        add_eef.convert(source, other, "metal", replace=True)

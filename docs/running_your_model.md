@@ -2,24 +2,21 @@
 
 Your fine-tuned model runs on the arms with `dreamcli`, the Dream library's robot runner: it reads the arms and cameras, asks the model for the next moves and drives the arms, with its own speed and safety limits. It runs from `~/dream-env` on the station's computer. Close `dhk-collect` first: only one program can use the arms at a time.
 
-## 1. Set up the station for dreamcli (once)
+## 1. The station's dreamcli setup
 
-Run the setup wizard and pick your arm type (YAM, Metal Arm or Maker Arm):
+The organizers have already run `dreamcli setup` on your station: it saved the arms and cameras in `~/.dreamlabs/station.yaml`, each camera in the same role as in your recordings. The model learned which view is which, so a swapped camera would make it act on the wrong image. Do not move the cameras. Turn the Dream library's environment on before the commands below:
 
 ```bash
 source ~/dream-env/bin/activate
-dreamcli setup
 ```
-
-It finds your arms and cameras and saves the station's config (`~/.dreamlabs/station.yaml`). Give each camera the same role it has in your recordings: the overhead camera as the scene (overhead) camera, and the left and right wrist cameras as the left and right wrists. The model learned which view is which, so a swapped camera makes it act on the wrong image.
 
 ## 2. Try it without moving the arms
 
 ```bash
 # YAM: your fine-tune drives the joints it learned
-dreamcli robot run --checkpoint dream-1-ft:<account>-my-task --task "put the red cube in the bowl" --action-space joint --dry-run
+dreamcli robot run --checkpoint dream-1-ft:<account>-myteam-cubes --task "put the red cube in the bowl" --action-space joint --dry-run
 # Metal or Maker arm: your fine-tune answers tool poses, which dreamcli turns into the arm's joints
-dreamcli robot run --checkpoint dream-1-ft:<account>-my-task --task "put the red cube in the bowl" --dry-run
+dreamcli robot run --checkpoint dream-1-ft:<account>-myteam-cubes --task "put the red cube in the bowl" --dry-run
 ```
 
 A dry run calls the model for real and writes nothing to the arms. The first call to a new model waits while the model starts, which can take up to an hour; later calls answer in well under a second. Use the same task text you recorded.

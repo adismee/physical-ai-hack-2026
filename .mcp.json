@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "dreamlabs-docs": {
+      "type": "http",
+      "url": "https://platform.dreamlabs.ai/api-documentation/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DREAM_API_KEY}"
+      }
+    }
+  }
+}

@@ -3,10 +3,11 @@
 Run it in ~/dream-env (the Dream library's environment), after collecting and before fine-tuning:
 
 ```
-~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/my-task --arm metal     # or: --arm maker
+~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/myteam-cubes --arm metal     # or: --arm maker
 ```
 
-It writes a new dataset next to the input, `<name>-eef`, and never changes the input. Per arm, per frame, it adds
+It writes a new dataset next to the input, `<name>-eef`, and never changes the input. After collecting more episodes,
+run it again with `--replace` to rebuild the `-eef` folder. Per arm, per frame, it adds
 the tool pose of the measured joints (state) and of the commanded joints (action), computed with Dream's own
 kinematics of the arm (`dream_ik`, the arm model and tool center point `dreamcli robot run` uses), and the gripper
 as 0 (closed) to 1 (open). The result is laid out as `src/dream_hackathon/embodiments/makermods.json`; it is checked
@@ -70,8 +71,11 @@ def pack(parts: dict[str, np.ndarray], spans: dict[str, list[int]]) -> np.ndarra
     return out
 
 
-def convert(source: pathlib.Path, target: pathlib.Path, arm: str) -> None:
-    """Writes the EEF dataset `target` from the collected dataset `source`."""
+def convert(source: pathlib.Path, target: pathlib.Path, arm: str, *, replace: bool = False) -> None:
+    """Writes the EEF dataset `target` from the collected dataset `source`.
+
+    @param replace Rebuild `target` if it already holds a dataset (one this script wrote earlier).
+    """
     from dream_ik.solver import ChunkIK
     from dream_ik.specs import SERVE
 
@@ -82,7 +86,11 @@ def convert(source: pathlib.Path, target: pathlib.Path, arm: str) -> None:
     if widths != {"observation.state": 14, "action": 14}:
         raise SystemExit(f"{source}: expected the 14-wide collected layout, found {widths}")
     if target.exists():
-        raise SystemExit(f"{target} already exists; remove it or pick another --out")
+        if not replace:
+            raise SystemExit(f"{target} already exists; pass --replace to rebuild it, or pick another --out")
+        if not (target / "meta" / "info.json").is_file():
+            raise SystemExit(f"{target} exists but is not a dataset; not replacing it")
+        shutil.rmtree(target)
     embodiment = json.loads(EMBODIMENT.read_text())
     kinematics, grip_scale = ARMS[arm]
     solver = ChunkIK(kinematics, SERVE.tool, float(info["fps"]))
@@ -130,11 +138,18 @@ def _stats(values: np.ndarray) -> dict[str, list[float]]:
 
 
 def _link_or_copy(source: str, target: str) -> None:
-    """Hard-links a file where the disk allows it (the videos do not change), else copies it."""
-    try:
-        os.link(source, target)
-    except OSError:
-        shutil.copy2(source, target)
+    """Hard-links a video where the disk allows it, and copies every other file.
+
+    Only the videos are shared: they are never written again. The metadata files are rewritten in the new dataset, and
+    a hard link would rewrite the collected dataset's copy with them.
+    """
+    if source.endswith(".mp4"):
+        try:
+            os.link(source, target)
+            return
+        except OSError:
+            pass
+    shutil.copy2(source, target)
 
 
 def main() -> None:
@@ -142,10 +157,11 @@ def main() -> None:
     parser.add_argument("dataset", type=pathlib.Path, help="the collected dataset folder")
     parser.add_argument("--arm", required=True, choices=sorted(ARMS))
     parser.add_argument("--out", type=pathlib.Path, help="the new dataset folder (default: <dataset>-eef)")
+    parser.add_argument("--replace", action="store_true", help="rebuild the output folder if it already exists")
     args = parser.parse_args()
     source = args.dataset.expanduser().resolve()
     target = (args.out or source.with_name(f"{source.name}-eef")).expanduser().resolve()
-    convert(source, target, args.arm)
+    convert(source, target, args.arm, replace=args.replace)
 
     import dream
 

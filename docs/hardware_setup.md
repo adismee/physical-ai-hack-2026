@@ -1,6 +1,8 @@
-# Setting up a station
+# Setting up a station (organizers)
 
-A station is one computer driving two follower arms, three cameras and one Meta Quest. This guide takes you from parts on a table to `dhk-collect --dry-run` showing the right numbers. Do the steps in order: each one checks a single device before the next one depends on it.
+A station is one computer driving two follower arms, three cameras and one Meta Quest. This guide is for the organizers who prepare the stations before the event; participants start at a ready station and never need it. It takes you from parts on a table to `dhk-collect --dry-run` showing the right numbers. Do the steps in order: each one checks a single device before the next one depends on it.
+
+Claude Code can walk you through these steps: see "For organizers" in the README (`/station-setup`).
 
 ## 1. The computer
 
@@ -23,11 +25,13 @@ uv sync --extra makermods    # Metal or Maker arms
 
 Add `--extra realsense` to that line if any camera is an Intel RealSense.
 
-Then copy the config for your arms. You will fill it in as you go:
+Then copy the config for your arms to `configs/station.yaml`, the name the participants' commands use. You will fill it in as you go:
 
 ```bash
-cp configs/yam.yaml configs/my_station.yaml      # or configs/metal.yaml, configs/maker.yaml
+cp configs/yam.yaml configs/station.yaml      # or configs/metal.yaml, configs/maker.yaml
 ```
+
+Set its `dataset_dir` to where datasets should go by default; participants usually name their own with `--dataset-dir`.
 
 ## 2. The arms
 
@@ -67,7 +71,7 @@ This point only shapes how the controls feel. The tool poses your Metal or Maker
 ### Check the arms
 
 ```bash
-uv run python scripts/check_arms.py --config configs/my_station.yaml
+uv run python scripts/check_arms.py --config configs/station.yaml
 ```
 
 This only reads the arms. YAM arms float in gravity compensation; MakerMods arms are opened with torque off, so support them. Move each arm by hand and check that the numbers for the right side change.
@@ -86,7 +90,7 @@ This lists the USB cameras by their stable `/dev/v4l/by-id/...` names and the Re
 Use `type: uvc` with a `device` for a webcam, or `type: realsense` with a `serial`. Keep the 1280x720 capture mode if the camera has it. Frames are center-cropped to 16:9 and recorded at `record_width` x `record_height` (640x360). Then look at all three:
 
 ```bash
-uv run python scripts/check_cameras.py --config configs/my_station.yaml
+uv run python scripts/check_cameras.py --config configs/station.yaml
 ```
 
 Move each camera until its view is what you want; then do not move it again for the rest of the hackathon. The model learns from these exact views.
@@ -104,7 +108,7 @@ The app reports each controller **relative to the headset**. Turning your head w
 ## 5. Check the directions with a dry run
 
 ```bash
-uv run dhk-collect --config configs/my_station.yaml --dry-run
+uv run dhk-collect --config configs/station.yaml --dry-run
 ```
 
 A dry run reads the arms and the Quest and never commands a motor. Its status line prints, once a second, each arm's tool position in that arm's base frame. Check two things:
@@ -116,4 +120,8 @@ Then set each arm's `workspace_min_m` and `workspace_max_m`, the box the tool is
 
 ## 6. The Dream library (for fine-tuning and running models)
 
-Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Install it with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save your API key. Then run `dreamcli setup` for the arm type you have: it is where your model will run from. On Metal and Maker arms it also measures the gripper angles step 2 needs.
+Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Install it with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save the API key the participants' jobs run under. Then run `dreamcli setup` for the arm type you have: participants' models run from the config it writes. On Metal and Maker arms it also measures the gripper angles step 2 needs.
+
+## 7. Before handing the station over
+
+Record two short episodes into a throwaway folder (`--dataset-dir ~/hackathon_data/station-test`) and check them with `~/dream-env/bin/python tools/finetune.py ~/hackathon_data/station-test --arm <arm> --check`. On a Metal or Maker arm, run `tools/add_eef.py` first and check the `-eef` folder. A station whose test passes is ready for participants.

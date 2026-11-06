@@ -1,11 +1,11 @@
 # Fine-tuning Dream-1 on your demonstrations
 
-Fine-tuning trains a copy of Dream-1 on your dataset through the Dream API. The result is a model of your own, with an id like `dream-1-ft:a1b2c3d4-my-task`, that you then run on the arms. `tools/finetune.py` runs every step of Dream's [fine-tuning tutorial](https://platform.dreamlabs.ai/api-documentation/fine-tuning/) in one command; the tutorial explains each step in depth.
+Fine-tuning trains a copy of Dream-1 on your dataset through the Dream API. The result is a model of your own, with an id like `dream-1-ft:a1b2c3d4-myteam-cubes`, that you then run on the arms. `tools/finetune.py` runs every step of Dream's [fine-tuning tutorial](https://platform.dreamlabs.ai/api-documentation/fine-tuning/) in one command; the tutorial explains each step in depth.
 
 ## Before you start
 
-- **The Dream library** installed in `~/dream-env`, with your API key saved: the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/). The tools below run there, not in this repo's environment.
-- **Credits** on the account for the job: the [Billing](https://platform.dreamlabs.ai/billing) page shows the price and your balance ($200 per job at the time of writing).
+- **The Dream library** is already installed on your station, in `~/dream-env`, with the API key your jobs run under. The tools below run there, not in this repo's environment. (Outside the hackathon, the [Getting started page](https://platform.dreamlabs.ai/api-documentation/) installs it.)
+- **Credits**: a job costs the price on the platform's [Billing](https://platform.dreamlabs.ai/billing) page ($200 at the time of writing). Check with the organizers before you queue one.
 - **Time**: about 7 to 8 hours of training, plus any wait in the queue, and up to an hour for your model's first start.
 
 ## 1. Metal and Maker arms: add the tool poses
@@ -13,22 +13,22 @@ Fine-tuning trains a copy of Dream-1 on your dataset through the Dream API. The 
 Dream's models for MakerMods arms train on each gripper's pose beside the joints. `tools/add_eef.py` computes those poses with Dream's own model of your arm, the same one `dreamcli` uses when it runs your model. It writes a new dataset next to yours, `<name>-eef`, and checks it:
 
 ```bash
-~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/my-task --arm metal    # or --arm maker
+~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/myteam-cubes --arm metal    # or --arm maker
 ```
 
-YAM datasets need no extra step: their fine-tunes train on the joints.
+If you collect more episodes afterwards, run it again with `--replace` to rebuild the `-eef` folder. YAM datasets need no extra step: their fine-tunes train on the joints.
 
 ## 2. Upload and fine-tune
 
 ```bash
 # YAM
-~/dream-env/bin/python tools/finetune.py ~/hackathon_data/my-task --arm yam --name my-task-1 --suffix my-task
+~/dream-env/bin/python tools/finetune.py ~/hackathon_data/myteam-cubes --arm yam --name myteam-cubes --suffix myteam-cubes
 # Metal or Maker arm: the -eef dataset
-~/dream-env/bin/python tools/finetune.py ~/hackathon_data/my-task-eef --arm metal --name my-task-1 --suffix my-task
+~/dream-env/bin/python tools/finetune.py ~/hackathon_data/myteam-cubes-eef --arm metal --name myteam-cubes --suffix myteam-cubes
 ```
 
 - `--name` is the dataset's name on the platform, and `--suffix` the end of your model's id. Both use lowercase letters, digits and hyphens, and each must be new on your account.
-- The first run registers your robot's embodiment, the description of what each recorded value means, as `hackathon-yam`, `hackathon-metal` or `hackathon-maker`, and later runs reuse it. `--embodiment` picks another name.
+- The first run on an account registers the robot's embodiment, the description of what each recorded value means, as `hackathon-yam`, `hackathon-metal` or `hackathon-maker`, and later runs reuse it.
 - `--lr-schedule cosine` tends to suit a model trained on a single task; `--learning-rate` takes 1e-6 to 1e-4 (the default is 1e-5).
 
 The command checks the dataset on your computer first, then uploads it, waits for the platform to process it, queues the job and waits for your model, printing the status as it goes. It ends with your model's id and the command to try it.
@@ -36,7 +36,7 @@ The command checks the dataset on your computer first, then uploads it, waits fo
 You can stop it with Ctrl+C at any point once the upload is done. Pick up again with the id it printed:
 
 ```bash
-~/dream-env/bin/python tools/finetune.py --arm yam --dataset-id ds_... --suffix my-task   # after the upload
+~/dream-env/bin/python tools/finetune.py --arm yam --dataset-id ds_... --suffix myteam-cubes   # after the upload
 ~/dream-env/bin/python tools/finetune.py --arm yam --job-id ftj_...                       # after the job is queued
 ```
 

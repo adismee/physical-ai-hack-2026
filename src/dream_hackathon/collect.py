@@ -1,7 +1,7 @@
 """Records Quest-teleoperated demonstrations into a LeRobot v2.1 dataset.
 
 ```
-uv run dhk-collect --config configs/yam.yaml --task "put the red cube in the bowl"
+uv run dhk-collect --config configs/yam.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/cubes
 uv run dhk-collect --config configs/yam.yaml --dry-run     # read only: shows the targets, moves nothing
 uv run dhk-collect --config configs/yam.yaml --sim         # YAM: i2rt's simulated arms, blank camera frames
 ```
@@ -19,6 +19,7 @@ grippers as `observation.state`, the commanded ones as `action`, and each camera
 
 import argparse
 import dataclasses
+import pathlib
 import sys
 import time
 from collections.abc import Callable
@@ -297,6 +298,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--config", required=True, help="the station config, e.g. configs/yam.yaml")
     parser.add_argument("--task", help="the task text recorded with each episode (default: the config's)")
+    parser.add_argument("--dataset-dir", help="the dataset folder episodes are added to (default: the config's)")
     parser.add_argument("--dry-run", action="store_true", help="read the arms and the Quest; command nothing")
     parser.add_argument("--sim", action="store_true", help="YAM: i2rt's simulated arms and blank camera frames")
     parser.add_argument("--quest-ip", help="the Quest's address for adb over Wi-Fi (default: USB)")
@@ -305,6 +307,8 @@ def main(argv: list[str] | None = None) -> None:
         station = config.load(args.config)
     except config.ConfigError as error:
         sys.exit(f"config: {error}")
+    if args.dataset_dir:
+        station = dataclasses.replace(station, dataset_dir=pathlib.Path(args.dataset_dir).expanduser())
     run(station, args.task or station.task, dry_run=args.dry_run, sim=args.sim, quest_ip=args.quest_ip)
 
 

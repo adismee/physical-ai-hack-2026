@@ -1,6 +1,6 @@
 # Collecting demonstrations
 
-You teach the model by showing it the task many times. Each time, from the start of the task to its end, is one episode. This guide covers the controls, a recording session, and what makes demonstrations a model learns well from.
+Your station is already set up; this is where you start. You teach the model by showing it the task many times. Each time, from the start of the task to its end, is one episode. This guide covers the controls, a recording session, and what makes demonstrations a model learns well from.
 
 ## The controls
 
@@ -19,27 +19,30 @@ The arm follows how your hand moves after you grip, not where your hand is. If y
 ## A recording session
 
 1. Start with the arms resting in their start pose: on a MakerMods station, supported or folded, since they go limp there at the end.
-2. Check the controls without moving the arms (see [hardware setup](hardware_setup.md), step 5):
+2. Practice the controls without moving the arms. A dry run shows each arm's tool position once a second; hold a grip and watch it follow your hand:
 
    ```bash
-   uv run dhk-collect --config configs/my_station.yaml --dry-run
+   uv run dhk-collect --config configs/station.yaml --dry-run
    ```
 
-3. Start the session. The task text is what the model learns to follow, so write it the way you will ask the robot:
+3. Start the session. The task text is what the model learns to follow, so write it the way you will ask the robot. Give your dataset a folder of its own, named for your team and task:
 
    ```bash
-   uv run dhk-collect --config configs/my_station.yaml --task "put the red cube in the bowl"
+   uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
    ```
 
 4. For each episode: set the scene, press A, do the task, press A to save. If it went wrong, press B instead and do it again.
 5. Press Ctrl+C when you are done. The arms return to where they started.
 
-Every session adds its episodes to the config's `dataset_dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; a different `--task` text in the same folder is fine too, when one model should learn several tasks.
+Every session adds its episodes to the same `--dataset-dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; a different `--task` text in the same folder is fine too, when one model should learn several tasks. If anything does not respond (an arm, a camera, the Quest), call the organizers rather than changing the station's config.
 
-Each saved episode is printed with its number. To check the dataset at any point, without uploading anything (in `~/dream-env`, see [fine-tuning](fine_tuning.md)):
+Each saved episode is printed with its number. To check the dataset at any point against Dream's own checks, without uploading anything (see [fine-tuning](fine_tuning.md)):
 
 ```bash
-~/dream-env/bin/python tools/finetune.py ~/hackathon_data/my-task --arm yam --check
+# YAM
+~/dream-env/bin/python tools/finetune.py ~/hackathon_data/myteam-cubes --arm yam --check
+# Metal or Maker arm: add_eef checks the dataset it writes; --replace rebuilds it after you collect more
+~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/myteam-cubes --arm metal --replace
 ```
 
 ## What the dataset holds
