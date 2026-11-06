@@ -13,6 +13,9 @@ import yaml
 
 from dream_hackathon import layouts
 
+## What the station templates (`configs/*.yaml`) put where each station's own value belongs.
+PLACEHOLDER = "REPLACE"
+
 
 class ConfigError(ValueError):
     """A station config value is missing or wrong; the message names the key."""
@@ -154,6 +157,9 @@ def load(path: str | pathlib.Path) -> StationConfig:
     raw = yaml.safe_load(pathlib.Path(path).read_text())
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: expected a YAML mapping at the top level")
+    placeholder = _placeholder(raw)
+    if placeholder:
+        raise ConfigError(f"'{placeholder}' still says REPLACE: fill in this station's value")
     arm = _get(raw, "arm", str)
     if arm not in layouts.FAMILIES:
         raise ConfigError(f"'arm' is {arm!r}; expected one of {sorted(layouts.FAMILIES)}")
@@ -195,6 +201,18 @@ def load(path: str | pathlib.Path) -> StationConfig:
         yam=_yam(_get(raw, "yam", dict)) if family == "yam" else None,
         makermods=_makermods(_get(raw, "makermods", dict)) if family == "makermods" else None,
     )
+
+
+def _placeholder(raw: Any, where: str = "") -> str | None:
+    """The first key, as `a.b.c`, whose value is a template's `REPLACE` placeholder; None when there is none."""
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            found = _placeholder(value, f"{where}.{key}" if where else str(key))
+            if found:
+                return found
+    elif isinstance(raw, str) and PLACEHOLDER in raw:
+        return where
+    return None
 
 
 def _get(raw: dict[str, Any], key: str, kind: type, where: str | None = None) -> Any:

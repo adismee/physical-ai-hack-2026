@@ -4,23 +4,31 @@ import pathlib
 
 import pytest
 import yaml
+from conftest import filled_template
 
 from dream_hackathon import config
 
 CONFIGS = pathlib.Path(__file__).resolve().parents[1] / "configs"
 
 
-def test_yam_and_maker_configs_load() -> None:
-    yam = config.load(CONFIGS / "yam.yaml")
+def test_templates_refuse_to_load_until_filled_in(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(config.ConfigError, match=r"'cameras\.overhead\.device' still says REPLACE"):
+        config.load(CONFIGS / "yam.yaml")
+    with pytest.raises(config.ConfigError, match=r"'arms\.left\.port' still says REPLACE"):
+        config.load(CONFIGS / "maker.yaml")
+
+
+def test_filled_yam_and_maker_configs_load(tmp_path: pathlib.Path) -> None:
+    yam = config.load(filled_template("yam", tmp_path))
     assert (yam.family, yam.control_hz // yam.fps) == ("yam", 2)
-    maker = config.load(CONFIGS / "maker.yaml")
+    maker = config.load(filled_template("maker", tmp_path))
     assert maker.family == "makermods"
     assert maker.arms["left"].tcp_xyz_m is None  # shipped unmeasured on purpose
 
 
-def test_metal_config_needs_its_measured_gripper_angles() -> None:
+def test_metal_config_needs_its_measured_gripper_angles(tmp_path: pathlib.Path) -> None:
     with pytest.raises(config.ConfigError, match="gripper_open_deg"):
-        config.load(CONFIGS / "metal.yaml")
+        config.load(filled_template("metal", tmp_path))
 
 
 @pytest.mark.parametrize(
@@ -34,7 +42,7 @@ def test_metal_config_needs_its_measured_gripper_angles() -> None:
     ],
 )
 def test_mistakes_name_the_key(tmp_path: pathlib.Path, change, message: str) -> None:
-    raw = yaml.safe_load((CONFIGS / "yam.yaml").read_text())
+    raw = yaml.safe_load(filled_template("yam", tmp_path).read_text())
     change(raw)
     path = tmp_path / "station.yaml"
     path.write_text(yaml.safe_dump(raw))

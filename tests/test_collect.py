@@ -8,7 +8,7 @@ import sys
 import dream
 import numpy as np
 import pytest
-from conftest import FLANGE, JOINT_NAMES, arm_urdf
+from conftest import FLANGE, JOINT_NAMES, arm_urdf, filled_template
 
 from dream_hackathon import cameras, collect, config, dataset, ik, layouts, quest
 
@@ -57,7 +57,7 @@ class FakeQuest:
 
 
 def _collector(tmp_path: pathlib.Path, arms: FakeArms, headset: FakeQuest, logs: list[str]) -> collect.Collector:
-    station = config.load(CONFIGS / "yam.yaml")
+    station = config.load(filled_template("yam", tmp_path))
     # A box large enough that it never clamps the test arm's tool.
     roomy = {
         side: dataclasses.replace(arm, workspace_min_m=np.full(3, -2.0), workspace_max_m=np.full(3, 2.0))

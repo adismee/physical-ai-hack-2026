@@ -59,6 +59,14 @@ def write_episodes(root: pathlib.Path, family: str, episodes: int, frames: int, 
         episode.save()
 
 
+def filled_template(name: str, tmp_path: pathlib.Path) -> pathlib.Path:
+    """A copy of `configs/<name>.yaml` with every REPLACE placeholder given a station-like value."""
+    configs = pathlib.Path(__file__).resolve().parents[1] / "configs"
+    path = tmp_path / f"{name}.yaml"
+    path.write_text((configs / f"{name}.yaml").read_text().replace("REPLACE", "0"))
+    return path
+
+
 @pytest.fixture
 def urdf_path(tmp_path: pathlib.Path) -> pathlib.Path:
     path = tmp_path / "arm.urdf"

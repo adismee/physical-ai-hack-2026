@@ -20,10 +20,16 @@ from dream_hackathon import cameras, config, dashboard, layouts
 
 
 def list_cameras() -> None:
-    """Prints the stable names of the UVC devices and the serials of the RealSense cameras."""
-    by_id = pathlib.Path("/dev/v4l/by-id")
-    for path in sorted(by_id.iterdir()) if by_id.exists() else []:
-        print(f"uvc        device: {path}  ->  {path.resolve()}")
+    """Prints the stable names of the UVC devices and the serials of the RealSense cameras.
+
+    `by-id` names a camera by its model and serial; `by-path` by the USB port it is plugged into, which is the one to
+    use when two identical webcams share a serial. A webcam has two nodes: its `index0` captures, its `index1` carries
+    metadata and cannot.
+    """
+    for folder in (pathlib.Path("/dev/v4l/by-id"), pathlib.Path("/dev/v4l/by-path")):
+        for path in sorted(folder.iterdir()) if folder.exists() else []:
+            usable = "" if path.name.endswith("index0") else "   (metadata node: not this one)"
+            print(f"uvc        device: {path}  ->  {path.resolve()}{usable}")
     try:
         import pyrealsense2 as rs
     except ImportError:
