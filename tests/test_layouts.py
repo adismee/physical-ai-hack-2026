@@ -1,9 +1,17 @@
 """The recorded layouts and the Dream embodiments match what `dreamcli robot run` sends each arm."""
 
+import pathlib
+import re
+import subprocess
+import sys
+
 import numpy as np
 import pytest
+import yaml
 
 from dream_hackathon import layouts
+
+CONFIGS = pathlib.Path(__file__).resolve().parents[1] / "configs"
 
 
 @pytest.mark.parametrize("family", ["yam", "makermods"])
@@ -41,3 +49,30 @@ def test_layouts_match_what_dreamcli_sends() -> None:
     assert set(yam["video"]) == set(adapter.YAM_VIDEO_ROLES.values())
     assert layouts.GRIP_SCALE["metal"] == pytest.importorskip("robots.metal").GRIP_SCALE_MM
     assert layouts.GRIP_SCALE["maker"] == pytest.importorskip("robots.makers").GRIPPER_MAX_MM
+
+
+@pytest.mark.parametrize("arm", ["metal", "maker"])
+def test_the_templates_carry_dreams_own_tool_point(arm: str) -> None:
+    # dreamcli drives a Metal or Maker arm about this point and add_eef records the training poses about it, so the
+    # kit's teleoperation uses the same one; scripts/use_dream_tcp.py writes it into a station's config.
+    specs = pytest.importorskip("dream_ik.specs")
+    spec = {"metal": specs.METAL_ARM, "maker": specs.MAKERS_ARM}[arm]
+    raw = yaml.safe_load((CONFIGS / f"{arm}.yaml").read_text())
+    assert raw["makermods"]["flange_link"] == spec.flange
+    expected = [round(float(value), 7) for value in spec.tools["tcp"].offset]
+    assert raw["arms"]["left"]["tcp_xyz_m"] == raw["arms"]["right"]["tcp_xyz_m"] == expected
+
+
+def test_use_dream_tcp_writes_the_point_into_a_station_config(tmp_path) -> None:
+    pytest.importorskip("dream_ik.specs")
+    station = tmp_path / "station.yaml"
+    station.write_text(re.sub(r"tcp_xyz_m: .*", "tcp_xyz_m: null", (CONFIGS / "maker.yaml").read_text()))
+    script = CONFIGS.parent / "scripts" / "use_dream_tcp.py"
+    done = subprocess.run([sys.executable, str(script), str(station)], capture_output=True, text=True, check=True)
+    assert "Dream's maker tool point" in done.stdout
+    raw = yaml.safe_load(station.read_text())
+    assert raw["arms"]["left"]["tcp_xyz_m"] == raw["arms"]["right"]["tcp_xyz_m"] == [0.0, 0.0, -0.1696387]
+    yam = tmp_path / "yam.yaml"
+    yam.write_text((CONFIGS / "yam.yaml").read_text())
+    refused = subprocess.run([sys.executable, str(script), str(yam)], capture_output=True, text=True)
+    assert refused.returncode != 0 and "metal or maker" in refused.stderr

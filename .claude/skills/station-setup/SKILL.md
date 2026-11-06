@@ -41,7 +41,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 1. The organizer calibrates each arm's zero in makermodslab, if it was not done already.
 2. Copy `gripper_open_deg` and `gripper_closed_deg` for each arm from `~/.dreamlabs/station.yaml` into `configs/station.yaml`, matching arms by port. Never guess them.
 3. Download the URDF: `uv run python scripts/fetch_urdf.py metal` (or `maker`).
-4. Tool center point: ask the organizer to measure each arm's (`docs/hardware_setup.md`, "Tool center point") and tell you the numbers, then write them into `arms.<side>.tcp_xyz_m`. Never fill them in yourself; if they are unsure, the station waits.
+4. Tool center point: with the stock MakerMods gripper, the kit uses Dream's own point (the one `dreamcli robot run` uses). The templates carry it; on an older `configs/station.yaml`, run `~/dream-env/bin/python scripts/use_dream_tcp.py configs/station.yaml`. Ask the organizer to check it in the dry run (fingertips on a mark, wrist turned by hand: the tool position stays put; `docs/hardware_setup.md`, "Tool center point"). With any other gripper, ask the organizer to measure each arm's and tell you the numbers, then write them into `arms.<side>.tcp_xyz_m`; never fill them in yourself, and if they are unsure, the station waits.
 5. Remind the organizer that both arms are brakeless: start every session with them resting where they can go limp.
 
 ## 5. Device checks

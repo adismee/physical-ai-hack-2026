@@ -23,7 +23,7 @@ def test_filled_yam_and_maker_configs_load(tmp_path: pathlib.Path) -> None:
     assert (yam.family, yam.control_hz // yam.fps) == ("yam", 2)
     maker = config.load(filled_template("maker", tmp_path))
     assert maker.family == "makermods"
-    assert maker.arms["left"].tcp_xyz_m is None  # shipped unmeasured on purpose
+    assert maker.arms["left"].tcp_xyz_m == (0.0, 0.0, -0.1696387)  # Dream's own point for the stock gripper
 
 
 def test_metal_config_needs_its_measured_gripper_angles(tmp_path: pathlib.Path) -> None:

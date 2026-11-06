@@ -22,8 +22,9 @@ arms:
     gripper_open_deg: -96.0     # dreamcli's Maker default; copy yours from the config dreamcli setup wrote
     gripper_closed_deg: -2.5    # as above
     # The tool center point: the point between the closed fingertips, in the flange's frame (link_007), metres.
-    # REQUIRED before teleoperating: measure it on your gripper (docs/hardware_setup.md). Never guess it.
-    tcp_xyz_m: null
+    # Dream's own point for the stock MakerMods gripper, the one `dreamcli robot run` drives about. A different
+    # gripper needs its own measured (docs/hardware_setup.md, "Tool center point"). Check it in a dry run either way.
+    tcp_xyz_m: [0.0, 0.0, -0.1696387]  # Dream's tool point for the stock gripper (scripts/use_dream_tcp.py)
   right:
     port: /dev/serial/by-id/REPLACE
     quest_to_base: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
@@ -31,7 +32,7 @@ arms:
     workspace_max_m: [0.60, 0.60, 0.60]
     gripper_open_deg: -96.0     # dreamcli's Maker default; copy yours from the config dreamcli setup wrote
     gripper_closed_deg: -2.5    # as above
-    tcp_xyz_m: null
+    tcp_xyz_m: [0.0, 0.0, -0.1696387]  # Dream's tool point for the stock gripper (scripts/use_dream_tcp.py)
 
 makermods:
   can_interface: slcan        # slcan (/dev/serial/... or /dev/ttyACM*) or socketcan (can0)

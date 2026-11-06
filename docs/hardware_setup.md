@@ -84,7 +84,17 @@ Both arms are brakeless. Start every session with them resting where they can go
 
 ### Tool center point (Metal and Maker arms)
 
-The tool center point (TCP) is the point between the gripper's closed fingertips. The Quest drives that point: when you turn your wrist, the gripper turns about it. **Measure it on your gripper; do not guess it or copy it from another arm.** With the gripper closed, measure from the flange's origin to the point between the fingertips, along the flange's x, y and z axes, in metres. The flange is `link6` on a Metal arm and `link_007` on a Maker arm. Write the three numbers in `arms.<side>.tcp_xyz_m` as `[x, y, z]`. Alternatively, `dreamcli tcp` (step 6) lets you place the point on a 3D view of the arm's URDF; given this same URDF and flange link, the `tcp` it writes is these three numbers. Either way, check the result against the real gripper yourself. The collector refuses to drive a Metal or Maker arm until both arms' `tcp_xyz_m` are filled in.
+The tool center point (TCP) is the point between the gripper's closed fingertips. The Quest drives that point: when you turn your wrist, the gripper turns about it. The flange is `link6` on a Metal arm and `link_007` on a Maker arm, and `arms.<side>.tcp_xyz_m` is the point in that link's frame, in metres.
+
+**Stock MakerMods gripper: Dream's own point.** The templates carry the tool point of Dream's own model of the arm, the point `dreamcli robot run` drives it about and the one `tools/add_eef.py` records the training data's tool poses about: `[0.135, 0, 0]` in `link6` on a Metal arm, `[0, 0, -0.1696387]` in `link_007` on a Maker arm. (Dream's URDFs and the kit's agree up to the flange, so the numbers mean the same point in both.) On a `configs/station.yaml` made from an older template, set both arms' point from the installed Dream library:
+
+```bash
+~/dream-env/bin/python scripts/use_dream_tcp.py configs/station.yaml
+```
+
+**Another gripper: measure it.** Do not guess it or copy it from another arm. With the gripper closed, measure from the flange's origin to the point between the fingertips, along the flange's x, y and z axes, in metres, and write the three numbers in `tcp_xyz_m`; or let `dreamcli tcp` place the point on a 3D view of the arm's URDF with its meshes (makermodslab's `frontend/public/<arm>-urdf` folder), which writes the same three numbers.
+
+**Check it on the arm, either way.** In the dry run (step 5), hold an arm's closed fingertips on a mark on the table and turn its wrist by hand, keeping the tips on the mark: that arm's tool position on the dashboard should stay within about a centimetre. If it swings by several, the point is off. The collector refuses to drive a Metal or Maker arm until both arms' `tcp_xyz_m` are filled in.
 
 This point only shapes how the controls feel. The tool poses your Metal or Maker fine-tune trains on come from Dream's own model of the arm (`tools/add_eef.py`).
 

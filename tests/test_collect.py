@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import pathlib
+import re
 import sys
 
 import dream
@@ -221,7 +222,8 @@ def test_the_task_falls_back_to_a_neutral_text():
 
 
 def test_a_missing_tool_center_point_is_one_line_not_a_traceback(tmp_path: pathlib.Path) -> None:
-    path = filled_template("maker", tmp_path)  # the template leaves tcp_xyz_m empty, for the organizer to measure
+    path = filled_template("maker", tmp_path)
+    path.write_text(re.sub(r"tcp_xyz_m: .*", "tcp_xyz_m: null", path.read_text()))  # a config without its point
     with pytest.raises(SystemExit) as stopped:
         collect.main(["--config", str(path), "--dataset-dir", str(tmp_path / "data")])
     assert str(stopped.value.code).startswith("config: 'arms.left.tcp_xyz_m' is not set")

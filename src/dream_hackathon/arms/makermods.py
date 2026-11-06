@@ -152,8 +152,9 @@ def teleop_ik(station: config.StationConfig) -> dict[str, ik.ArmIK]:
     unmeasured = [side for side, arm in station.arms.items() if arm.tcp_xyz_m is None]
     if unmeasured:
         raise config.ConfigError(
-            f"'arms.{unmeasured[0]}.tcp_xyz_m' is not set: measure each arm's tool center point on the real gripper "
-            "(`dreamcli tcp`, or by hand, see docs/hardware_setup.md) and enter it before teleoperating"
+            f"'arms.{unmeasured[0]}.tcp_xyz_m' is not set: for the stock gripper, set Dream's own tool point with "
+            "`~/dream-env/bin/python scripts/use_dream_tcp.py configs/station.yaml`; for another gripper, measure "
+            'its point (docs/hardware_setup.md, "Tool center point")'
         )
     urdf = mm.urdf.read_text()
     teleop = station.teleop
