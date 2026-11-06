@@ -299,3 +299,54 @@ def test_a_camera_reconnects_by_itself_once_it_is_back(monkeypatch):
     finally:
         ScriptedReader.plugged = True
         camera.close()
+
+
+class FakeRealSense:
+    """Enough of pyrealsense2 to see whether a camera's pipeline is started."""
+
+    def __init__(self, connected: list[str]) -> None:
+        self.connected = connected
+        self.started: list[str] = []
+        self.camera_info = type("camera_info", (), {"serial_number": "serial"})
+        self.stream = type("stream", (), {"color": "color"})
+        self.format = type("format", (), {"bgr8": "bgr8"})
+        fake = self
+
+        class Device:
+            def __init__(self, serial: str) -> None:
+                self._serial = serial
+
+            def get_info(self, what):
+                return self._serial
+
+        class Context:
+            def query_devices(self):
+                return [Device(serial) for serial in fake.connected]
+
+        class Config:
+            def enable_device(self, serial):
+                self.serial = serial
+
+            def enable_stream(self, *args):
+                pass
+
+        class Pipeline:
+            def start(self, config):
+                fake.started.append(config.serial)
+
+        self.context, self.config, self.pipeline = Context, Config, Pipeline
+
+
+def test_a_realsense_that_is_not_connected_is_never_started(monkeypatch):
+    # Starting one that is not connected blocks for 15 s holding the GIL, which would freeze the whole session.
+    fake = FakeRealSense(connected=["111"])
+    monkeypatch.setitem(__import__("sys").modules, "pyrealsense2", fake)
+    cfg = config.CameraConfig(
+        role="wrist_r", kind="realsense", device=None, serial="222", width=1280, height=720, fps=30
+    )
+    with pytest.raises(cameras.CameraError, match="RealSense 222 is not connected"):
+        cameras._RealSenseReader(cfg)
+    assert fake.started == []
+    fake.connected.append("222")
+    cameras._RealSenseReader(cfg)
+    assert fake.started == ["222"]

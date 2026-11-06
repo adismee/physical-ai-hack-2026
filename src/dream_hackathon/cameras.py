@@ -205,6 +205,13 @@ class _RealSenseReader:
                 "a RealSense camera needs the realsense extra: run `uv sync --extra yam --extra realsense` (or "
                 "`--extra makermods --extra realsense`); name both, since a uv sync without one removes it"
             ) from error
+        # pipeline.start() of a camera that is not connected blocks for 15 s holding Python's GIL, which freezes every
+        # thread of the process (the control loop and the arms' SDK among them): ask first, which takes a tenth of a
+        # second and freezes nothing.
+        connected = {device.get_info(rs.camera_info.serial_number) for device in rs.context().query_devices()}
+        if cfg.serial not in connected:
+            others = ", ".join(sorted(connected)) or "none"
+            raise CameraError(f"camera '{cfg.role}': RealSense {cfg.serial} is not connected (connected: {others})")
         self._pipeline = rs.pipeline()
         rs_config = rs.config()
         rs_config.enable_device(cfg.serial)

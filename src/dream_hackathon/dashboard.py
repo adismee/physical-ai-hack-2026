@@ -274,9 +274,9 @@ PAGE = """<!doctype html>
   #devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; margin-bottom: 12px; }
   .device { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
   .device .name { font-weight: 600; }
-  .device.ok .name::before { content: "\25CF  "; color: var(--ok); }
+  .device.ok .name::before { content: "\\25CF  "; color: var(--ok); }
   .device.bad { border-color: var(--rec); }
-  .device.bad .name::before { content: "\25CF  "; color: var(--rec); }
+  .device.bad .name::before { content: "\\25CF  "; color: var(--rec); }
   .device .problem { color: var(--rec); margin-top: 2px; }
 </style>
 </head>

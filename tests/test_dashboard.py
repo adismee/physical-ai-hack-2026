@@ -89,3 +89,9 @@ def test_the_page_gets_each_devices_state_and_the_phase(board: dashboard.Dashboa
     ]
     page = _get(board, "/")[1].decode()
     assert 'id="devices"' in page and "press A on the right controller" in page
+
+
+def test_the_page_has_no_control_characters(board: dashboard.Dashboard) -> None:
+    page = _get(board, "/")[1].decode()
+    assert "\\25CF" in page  # the CSS escape of the status dot, as the browser must get it
+    assert not any(ord(char) < 32 and char not in "\n\t" for char in page)
