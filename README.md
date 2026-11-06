@@ -30,6 +30,8 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
    The dashboard shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
 
+   Your episodes are saved on the station in the `--dataset-dir` folder, here `~/hackathon_data/myteam-cubes`, as a LeRobot v2.1 dataset: not in the repo, and not uploaded until you fine-tune. [Where your data is stored](docs/data_collection.md#where-your-data-is-stored) shows what is inside and how to copy it to your laptop.
+
 2. **Fine-tune Dream-1 on them** ([docs/fine_tuning.md](docs/fine_tuning.md)). First save your team's API key on the station (the guide shows how). Then use `--arm yam`, `metal` or `maker`, whichever your station has:
 
    ```bash

@@ -1,6 +1,33 @@
 # Collecting demonstrations
 
-Your station is already set up; this is where you start. You teach the model by showing it the task many times. Each time, from the start of the task to its end, is one episode. This guide covers the controls, a recording session, and what makes demonstrations a model learns well from.
+Your station is already set up; this is where you start. You teach the model by showing it the task many times. Each time, from the start of the task to its end, is one episode. This guide covers the controls, a recording session, where your data is stored, and what makes demonstrations a model learns well from.
+
+## Quick start
+
+1. From your laptop, connect to the station with the dashboard's port forwarded, and open a tmux session so a dropped connection does not end yours:
+
+   ```bash
+   ssh -L 8080:localhost:8080 <user>@<station>
+   tmux new -A -s collect
+   cd ~/physical-ai-hacks
+   ```
+
+2. Open http://localhost:8080 in your laptop's browser: the dashboard shows the cameras, the arms and your episodes.
+3. With the arms in their start pose, put on the Quest and practice once with the arms still (Ctrl+C ends it):
+
+   ```bash
+   uv run dhk-collect --config configs/station.yaml --dry-run
+   ```
+
+4. Start the session, with your task and your team's own dataset folder:
+
+   ```bash
+   uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
+   ```
+
+5. For each episode: set the scene, press A, do the task, press A again to save it (B throws it away). Press Ctrl+C when you are done.
+
+Your episodes are saved in `~/hackathon_data/myteam-cubes` on the station ([where your data is stored](#where-your-data-is-stored)). The sections below explain each step.
 
 ## The controls
 
@@ -77,6 +104,39 @@ uv run dhk-dataset drop ~/hackathon_data/myteam-cubes 3        # asks first; sev
 ```
 
 The episodes after it are renumbered, so check `list` again before dropping another. On a Metal or Maker arm, rebuild the dataset you fine-tune on afterwards with `tools/add_eef.py ... --replace`. Stop `dhk-collect` before dropping episodes from the folder it records into.
+
+## Where your data is stored
+
+Your data stays on the station, in the folder you pass with `--dataset-dir` (without it, the folder the config's `dataset_dir` names). It is not in the repo, and nothing is uploaded until you fine-tune. Each folder is one LeRobot v2.1 dataset, and every session adds to it:
+
+```
+~/hackathon_data/myteam-cubes/
+  meta/
+    info.json                       the dataset's shape: frame rate, cameras, state and action
+    episodes.jsonl                  one line per episode: its number, task and length
+    tasks.jsonl                     the task texts
+    episodes_stats.jsonl            each episode's statistics, which Dream's checks read
+  data/chunk-000/
+    episode_000000.parquet          one row per frame: observation.state, action, timestamp, ...
+    episode_000001.parquet
+  videos/chunk-000/
+    observation.images.overhead/episode_000000.mp4
+    observation.images.wrist_l/episode_000000.mp4
+    observation.images.wrist_r/episode_000000.mp4
+```
+
+On a Metal or Maker arm the video folders are `observation.images.scene`, `observation.images.left_wrist` and `observation.images.right_wrist`, and `tools/add_eef.py` writes the dataset you fine-tune on beside yours, as `~/hackathon_data/myteam-cubes-eef`.
+
+Two more places on the station:
+
+- `~/.cache/dream_hackathon/recording/` holds the episode being recorded. Saving it moves it into your dataset; B or Ctrl+C deletes it.
+- `~/.cache/dream_hackathon/collect.log` holds a session's output after the SSH connection drops.
+
+To keep a copy on your laptop, run this on the laptop:
+
+```bash
+scp -r <user>@<station>:hackathon_data/myteam-cubes .
+```
 
 ## What the dataset holds
 
