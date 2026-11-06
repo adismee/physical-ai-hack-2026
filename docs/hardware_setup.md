@@ -6,18 +6,18 @@ Claude Code can walk you through these steps: see "For organizers" in the README
 
 ## 1. The computer
 
-You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
+You need Ubuntu 26.04 LTS on an x86-64 computer (the version the stations run and CI tests on), with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
 
 ```bash
 sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-headers-$(uname -r)
 git lfs install                                  # the Quest app is stored with git LFS
-curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
+curl -LsSf https://astral.sh/uv/install.sh | sh  # uv brings its own Python 3.13 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
 git clone https://github.com/koustubh1012/physical-ai-hacks.git
 cd physical-ai-hacks
 ```
 
-Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests.
+Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
 
 Install the dependencies for your arm type. A station installs one arm type, never both:
 

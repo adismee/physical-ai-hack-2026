@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     name: lint and tests (with Dream's IK)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - run: git lfs install
@@ -23,7 +23,7 @@ jobs:
 
   yam:
     name: tests on the YAM station's install (i2rt)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - run: git lfs install
@@ -33,7 +33,7 @@ jobs:
 
   secrets:
     name: secret scan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
         with:
