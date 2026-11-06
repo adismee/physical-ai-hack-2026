@@ -13,6 +13,7 @@ sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-hea
 sudo usermod -aG video,plugdev $USER             # lets SSH sessions open the cameras (from your next login)
 echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2833", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/90-quest-adb.rules
 sudo udevadm control --reload-rules              # the rule above lets SSH sessions use the Quest over adb
+sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2833   # and applies it to a headset already plugged in
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv brings its own Python 3.13 and every dependency
 source $HOME/.local/bin/env                     # puts uv on this terminal's PATH (new terminals have it)
