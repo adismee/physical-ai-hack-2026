@@ -17,7 +17,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 1. The computer
 
-1. Check the tools: `git lfs version`, `uv --version`, `adb version`, `tmux -V`. For anything missing, give the organizer the install line from `docs/hardware_setup.md` (step 1) to run; it needs `sudo`.
+1. Check the tools: `git lfs version`, `uv --version`, `adb version`, `tmux -V`. If `uv` is not found right after installing it, `source $HOME/.local/bin/env` puts it on the PATH (never the snap). For anything missing, give the organizer the install line from `docs/hardware_setup.md` (step 1) to run; it needs `sudo`.
 2. Install the station's environment: `uv sync --extra yam` or `uv sync --extra makermods`, plus `--extra realsense` if needed. If the Quest app fails to install from git LFS, check that `git lfs install` was run.
 3. Run the hardware-free tests of the teleop and the configs in the station's environment: `uv run pytest tests/test_teleop.py tests/test_ik.py tests/test_config.py`. The dataset checks run later, in `~/dream-env` (step 7): the Dream library's checks need a newer PyAV than a MakerMods station's environment has.
 
