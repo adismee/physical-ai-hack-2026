@@ -23,7 +23,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 2. The station config
 
-1. Copy the template: `cp configs/<arm>.yaml configs/station.yaml`.
+1. Copy the template, unless `configs/station.yaml` already exists: then keep it and fix what the load-check names. Never copy over a filled-in config; `[ -e configs/station.yaml ] || cp configs/<arm>.yaml configs/station.yaml` is safe to run again.
 2. Ports:
    - YAM: `ip link show` lists the CAN interfaces; i2rt's guide gives them fixed names, `can_follower_l` and `can_follower_r`. If they are down, give the organizer the `sudo ip link set ... up type can bitrate 1000000` lines.
    - Metal and Maker: `ls -l /dev/serial/by-id/` lists the adapters. Ask the organizer to unplug one arm's adapter and see which entry disappears, so left and right are not swapped.

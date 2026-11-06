@@ -34,7 +34,7 @@ Add `--extra realsense` to that line if any camera is an Intel RealSense.
 Then copy the config for your arms to `configs/station.yaml`, the name the participants' commands use. You will fill it in as you go:
 
 ```bash
-cp configs/yam.yaml configs/station.yaml      # or configs/metal.yaml, configs/maker.yaml
+[ -e configs/station.yaml ] || cp configs/yam.yaml configs/station.yaml   # or metal.yaml, maker.yaml; keeps a filled-in one
 ```
 
 Set its `dataset_dir` to where datasets should go by default; participants usually name their own with `--dataset-dir`.
