@@ -19,7 +19,7 @@ Guidance for Claude Code in this repository. The repo is the Dream hackathon kit
 
 ## Commands
 
-- Station environment: `uv sync --extra yam` or `uv sync --extra makermods`, plus `--extra realsense` when a camera is a RealSense. One arm family per station.
+- Station environment: `uv sync --extra yam --extra realsense` or `uv sync --extra makermods --extra realsense` (the realsense extra does no harm without a RealSense). Always name both extras in one `uv sync`: one without an extra removes it. One arm family per station.
 - The station's config is `configs/station.yaml`, a filled-in copy of `configs/yam.yaml`, `metal.yaml` or `maker.yaml`; it is not committed. Load-check it with `uv run python -c "from dream_hackathon import config; config.load('configs/station.yaml')"`.
 - The Dream steps run in `~/dream-env`, the Dream library's environment: `~/dream-env/bin/python tools/add_eef.py ...` (Metal and Maker arms only) and `~/dream-env/bin/python tools/finetune.py ...`.
 - Datasets: `uv run dhk-dataset list <folder>`, `uv run dhk-dataset drop <folder> <n>...`.

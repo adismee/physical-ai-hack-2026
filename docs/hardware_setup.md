@@ -26,11 +26,11 @@ Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instea
 Install the dependencies for your arm type. A station installs one arm type, never both:
 
 ```bash
-uv sync --extra yam          # YAM arms
-uv sync --extra makermods    # Metal or Maker arms
+uv sync --extra yam --extra realsense          # YAM arms
+uv sync --extra makermods --extra realsense    # Metal or Maker arms
 ```
 
-Add `--extra realsense` to that line if any camera is an Intel RealSense.
+`--extra realsense` adds the Intel RealSense library; it does no harm on a station with webcams only, so keep it. Always name both extras in one `uv sync`: a `uv sync` without one of them removes it.
 
 Then copy the config for your arms to `configs/station.yaml`, the name the participants' commands use. You will fill it in as you go:
 

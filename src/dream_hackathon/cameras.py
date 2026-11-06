@@ -154,7 +154,10 @@ class _RealSenseReader:
         try:
             import pyrealsense2 as rs
         except ImportError as error:
-            raise CameraError("a RealSense camera needs the realsense extra: uv sync --extra realsense ...") from error
+            raise CameraError(
+                "a RealSense camera needs the realsense extra: run `uv sync --extra yam --extra realsense` (or "
+                "`--extra makermods --extra realsense`); name both, since a uv sync without one removes it"
+            ) from error
         self._pipeline = rs.pipeline()
         rs_config = rs.config()
         rs_config.enable_device(cfg.serial)
