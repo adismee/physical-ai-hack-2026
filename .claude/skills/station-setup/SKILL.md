@@ -52,7 +52,7 @@ Work through the steps in order, one at a time. After each, say what you found a
 
 ## 6. Dry run
 
-Ask first (rule 2). The organizer runs `uv run dhk-collect --config configs/station.yaml --dry-run` and reads the status lines to you, or you run it if they agree; it never commands a motor. Check both things in `docs/hardware_setup.md` step 5:
+Ask first (rule 2). The organizer runs `uv run dhk-collect --config configs/station.yaml --dry-run` and reads the status lines to you, or you run it if they agree; it never commands a motor. It waits for every device first and prints what each needs; the arms open only when the organizer presses A on the right controller, so a device it lists as not ready is the next thing to fix. Check both things in `docs/hardware_setup.md` step 5:
 
 1. With the grips released, moving an arm by hand moves its tool position the right way. On a Metal or Maker arm, a joint going the wrong way means a sign in `makermods.joint_signs` is flipped.
 2. With a grip held, moving the hand forward, left and up moves that tool the same way in the arm's base frame (the frames are in `docs/hardware_setup.md`). Fix an axis in that arm's `quest_to_base`, keeping the matrix a rotation.

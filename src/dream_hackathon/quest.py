@@ -72,12 +72,13 @@ class Quest:
         from oculus_reader.reader import OculusReader
 
         if ip_address is None:
-            problem = adb_problem(_adb_devices())
+            problem = adb_problem(adb_devices())
             if problem is not None:
                 raise QuestError(f"the Quest is plugged in but adb cannot use it: {problem}")
         self._reader = OculusReader(ip_address=ip_address)
         self._last_transforms: Any = None
         self._last_change_s = 0.0
+        self._ever_changed = False
         self._held: set[str] = set()
 
     def read(self) -> QuestState:
@@ -87,8 +88,13 @@ class Quest:
         if transforms is not self._last_transforms:
             self._last_transforms = transforms
             self._last_change_s = now
+            self._ever_changed = self._ever_changed or bool(transforms)
         is_fresh = bool(transforms) and now - self._last_change_s < STALE_AFTER_S
         return parse(transforms if is_fresh else {}, buttons or {}, self._held)
+
+    def data_age_s(self) -> float:
+        """Seconds since read() last saw new controller data; infinite before the first. Safe from another thread."""
+        return time.monotonic() - self._last_change_s if self._ever_changed else float("inf")
 
     def close(self) -> None:
         self._reader.stop()
@@ -100,11 +106,7 @@ def adb_problem(adb_devices_output: str) -> str | None:
     None when a USB device is ready, or when none is listed at all (oculus_reader then says it found none). Devices
     on Wi-Fi (listed as an address and port) are not looked at.
     """
-    states = []
-    for line in adb_devices_output.splitlines():
-        serial, tab, state = line.partition("\t")
-        if tab and serial.count(".") < 3:
-            states.append(state.strip())
+    states = [state for _, state in usb_devices(adb_devices_output)]
     if "device" in states:
         return None
     for state in states:
@@ -114,7 +116,17 @@ def adb_problem(adb_devices_output: str) -> str | None:
     return None
 
 
-def _adb_devices() -> str:
+def usb_devices(adb_devices_output: str) -> list[tuple[str, str]]:
+    """The `(serial, state)` of each USB device `adb devices` lists; one on Wi-Fi (address:port) is left out."""
+    found = []
+    for line in adb_devices_output.splitlines():
+        serial, tab, state = line.partition("\t")
+        if tab and serial.count(".") < 3:
+            found.append((serial, state.strip()))
+    return found
+
+
+def adb_devices() -> str:
     """What `adb devices` prints, or nothing when adb is not installed or does not answer."""
     try:
         return subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=15).stdout

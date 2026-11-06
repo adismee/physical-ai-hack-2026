@@ -12,6 +12,12 @@ again, saves it; B discards it; the right joystick click sends both arms back to
 recording). Ctrl+C ends the session: an episode still recording is discarded, and the arms return to where they
 started before the vendor's shutdown releases them.
 
+Starting: the dashboard comes up first, before any device is opened. The session then waits for the Quest, the
+cameras and the arms' links, showing what each needs on the page and in the terminal (devices.py), and opens the
+arms only once everything is ready and A is pressed on the right controller (wait_and_open_arms()). During the
+session the devices are checked every second, and a problem (a camera unplugged, a CAN link down, the Quest silent)
+is shown the same way; a camera reconnects by itself once it is back.
+
 Over SSH: the session serves a browser dashboard on the station's loopback address (dashboard.py says how to open
 it). A lost connection or a `kill` ends the session the same safe way as Ctrl+C, with the rest of its output in
 LOG_PATH; run it inside tmux to keep it going instead. Only one program drives the arms at a time (station_lock.py).
@@ -29,6 +35,7 @@ import pathlib
 import signal
 import socket
 import sys
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -36,7 +43,19 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from dream_hackathon import arms, cameras, config, dashboard, dataset, ik, layouts, quest, station_lock, teleop
+from dream_hackathon import (
+    arms,
+    cameras,
+    config,
+    dashboard,
+    dataset,
+    devices,
+    ik,
+    layouts,
+    quest,
+    station_lock,
+    teleop,
+)
 
 ## Homing and the end-of-session return move every joint at most this fast.
 HOME_SPEED_RAD_S = 0.5
@@ -57,6 +76,11 @@ LOG_PATH = pathlib.Path("~/.cache/dream_hackathon/collect.log").expanduser()
 ## the participant, since Dream's service labels every dataset from its head camera, but the LeRobot v2.1 files
 ## (and Dream's checks of them) need one non-empty text per episode.
 DEFAULT_TASK = "do the demonstrated task"
+
+## How often the devices are checked, while waiting for them and during a session.
+CHECK_EVERY_S = 1.0
+## How often the Quest is read while the session waits for A.
+WAIT_TICK_S = 0.05
 
 ## Frames by camera role, at the recording size.
 FrameSource = Callable[[], dict[str, npt.NDArray[np.uint8]]]
@@ -331,31 +355,39 @@ def _run_locked(
             "note: this session runs over SSH outside tmux. If the connection drops it ends, safely (the arms return "
             "and are released); start it inside `tmux new -A -s collect` to keep it running instead."
         )
-    open_cameras: dict[str, cameras.Camera] = {}
+    found = devices.DeviceSet(station, sim=sim, quest_ip=quest_ip)
     blank = np.zeros((station.record_height, station.record_width, 3), dtype=np.uint8)
 
-    def blank_frames() -> dict[str, npt.NDArray[np.uint8]]:
-        return {role: blank for role in layouts.CAMERA_ROLES}
+    def frame(role: str) -> npt.NDArray[np.uint8]:
+        if sim:
+            return blank
+        camera = found.cameras.get(role)
+        if camera is None:
+            raise cameras.CameraError(f"camera '{role}' is not open yet")
+        return camera.latest()
 
-    def camera_frames() -> dict[str, npt.NDArray[np.uint8]]:
-        return {role: camera.latest() for role, camera in open_cameras.items()}
+    def frames() -> dict[str, npt.NDArray[np.uint8]]:
+        return {role: frame(role) for role in layouts.CAMERA_ROLES}
 
-    frames: FrameSource = blank_frames if sim else camera_frames
-    board = _open_dashboard(station, frames, port)
+    board = _open_dashboard(station, frame, port)
 
     def log(line: str) -> None:
         _say(line)
         if board is not None:
             board.event(line)
 
-    headset = quest.Quest(quest_ip)
+    monitor = None
     try:
-        if not sim:
-            open_cameras = cameras.open_cameras(station.cameras, station.record_width, station.record_height)
-        robot = arms.open_arms(station, energize=not dry_run, sim=sim)
+        reported: dict[str, str | None] = {}
+        try:
+            robot = wait_and_open_arms(station, found, board, log, dry_run=dry_run, sim=sim, reported=reported)
+        except KeyboardInterrupt:
+            log("session ended before the arms were opened")
+            return
+        monitor = _Monitor(found, board, log, reported)
         collector = None
         try:
-            collector = Collector(station, task, robot, headset, frames, iks, writer, log=log)
+            collector = Collector(station, task, robot, found.headset, frames, iks, writer, log=log)
             _loop(collector, 1.0 / station.control_hz, board)
         finally:
             # From here the shutdown runs to its end: a hang-up, a kill or another Ctrl+C would leave the arms
@@ -372,21 +404,141 @@ def _run_locked(
                 robot.close()
                 log("session ended")
     finally:
-        for camera in open_cameras.values():
-            camera.close()
-        headset.close()
+        if monitor is not None:
+            monitor.stop()
+        found.close()
         if board is not None:
             board.close()
 
 
-def _open_dashboard(station: config.StationConfig, frames: FrameSource, port: int) -> dashboard.Dashboard | None:
+def wait_and_open_arms(
+    station: config.StationConfig,
+    found: devices.DeviceSet,
+    board: dashboard.Dashboard | None,
+    log: Callable[[str], None],
+    *,
+    dry_run: bool,
+    sim: bool,
+    reported: dict[str, str | None] | None = None,
+    open_arms: Callable[..., arms.Arms] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> arms.Arms:
+    """Opens the devices as they become ready, then the arms once everything is ready and A is pressed.
+
+    Every CHECK_EVERY_S it tries the devices that are not open yet and shows each one's state on the page and, when
+    it changes, in the terminal. Nothing opens the arms before A (a simulated YAM needs no A): on a YAM, opening them
+    makes them hold their pose and sweep the grippers. Arms that fail to open are reported, and A tries again.
+
+    @param reported Each device's last reported problem, filled in here so the session's monitor goes on from it.
+    @return The open arms.
+    """
+    reported = {} if reported is None else reported
+    open_arms = open_arms or arms.open_arms
+    phase = ""
+    arm_error: str | None = None
+    ready = False
+    next_check_s = clock()
+    while True:
+        if clock() >= next_check_s:
+            found.try_open()
+            statuses = found.statuses()
+            ready = all(status.problem is None for status in statuses)
+            if arm_error is not None:
+                statuses.append(devices.Status("arms", arm_error))
+            _report(statuses, reported, log)
+            if board is not None:
+                board.devices(statuses)
+            next_check_s = clock() + CHECK_EVERY_S
+        wanted = ("opening" if sim else "ready") if ready else "waiting"
+        if wanted != phase:
+            phase = wanted
+            if board is not None:
+                board.phase(phase)
+            if phase == "waiting":
+                waiting_for = [name for name, problem in reported.items() if problem is not None and name != "arms"]
+                log(f"waiting for: {', '.join(waiting_for)} (the dashboard says what each needs)")
+            elif phase == "ready":
+                log("everything is ready: press A on the right controller to open the arms (Ctrl+C quits)")
+        pressed = found.headset.read().pressed if found.headset is not None else frozenset()
+        if phase == "opening" or (phase == "ready" and "A" in pressed):
+            if board is not None:
+                board.phase("opening")
+            log("opening the arms" + ("" if dry_run or sim else ": keep clear of them and of the grippers' jaws"))
+            try:
+                robot = open_arms(station, energize=not dry_run, sim=sim)
+            except Exception as error:  # noqa: BLE001 - shown, and A tries again
+                arm_error = f"did not open: {error}; fix it, then press A again"
+                log(f"the arms {arm_error}")
+                phase, next_check_s = "", clock()
+                continue
+            if arm_error is not None:
+                reported.pop("arms", None)
+                if board is not None:
+                    board.devices(found.statuses())
+            if board is not None:
+                board.phase("")
+            return robot
+        sleep(WAIT_TICK_S)
+
+
+class _Monitor:
+    """Checks the devices every CHECK_EVERY_S during a session, on its own thread, and shows what changes."""
+
+    def __init__(
+        self,
+        found: devices.DeviceSet,
+        board: dashboard.Dashboard | None,
+        log: Callable[[str], None],
+        reported: dict[str, str | None],
+        every_s: float = CHECK_EVERY_S,
+    ) -> None:
+        self._found = found
+        self._board = board
+        self._log = log
+        self._reported = reported
+        self._every_s = every_s
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="device-monitor", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._every_s):
+            try:
+                statuses = self._found.statuses()
+            except Exception as error:  # noqa: BLE001 - a check that fails must not end the session
+                statuses = [devices.Status("devices", f"could not be checked: {error}")]
+            _report(statuses, self._reported, self._log)
+            if self._board is not None:
+                self._board.devices(statuses)
+
+
+def _report(statuses: list[devices.Status], reported: dict[str, str | None], log: Callable[[str], None]) -> None:
+    """Logs each device whose state changed since the last report: its problem, or that it is ready again."""
+    for status in statuses:
+        if status.name in reported and reported[status.name] == status.problem:
+            continue
+        if status.problem is not None:
+            log(f"{status.name}: {status.problem}")
+        elif reported.get(status.name) is not None or status.name not in reported:
+            log(f"{status.name}: ready")
+        reported[status.name] = status.problem
+
+
+def _open_dashboard(
+    station: config.StationConfig, frame: Callable[[str], npt.NDArray[np.uint8]], port: int
+) -> dashboard.Dashboard | None:
     """Starts the dashboard and says how to open it; a taken port leaves the session without one."""
     if not port:
         return None
     try:
         board = dashboard.Dashboard(
             port,
-            frames,
+            frame,
             layouts.video_keys(station.family),
             station.dataset_dir,
             title=f"{socket.gethostname()}: {station.arm} station",

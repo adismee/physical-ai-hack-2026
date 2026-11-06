@@ -27,6 +27,8 @@ Your station is already set up; this is where you start. You teach the model by 
 
    While it runs, open http://localhost:8080 in your laptop's browser: the dashboard shows the cameras, the arms and your episodes. The page is there only while `dhk-collect` runs; before that, the browser cannot connect.
 
+   The page lists every device: the Quest, the three cameras and both arms' links. A red one says what is wrong and what to do, and the session waits for it. Once every device is ready, press A on the right controller: only then are the arms opened.
+
 4. Start the session, with your team's own dataset folder:
 
    ```bash
@@ -46,7 +48,7 @@ Your episodes are saved in `~/hackathon_data/myteam-cubes` on the station ([wher
 | Grip (middle finger), held | Drives that controller's arm: the gripper follows your hand |
 | Grip released | The arm stops where it is; move your hand and grip again to keep going |
 | Index trigger | That arm's gripper: released is open, pulled is closed |
-| A | Starts recording an episode; pressed again, saves it |
+| A | Starts recording an episode; pressed again, saves it. At the start of a session, once every device is ready, it first opens the arms |
 | B | Throws away the episode being recorded |
 | Right joystick click | Sends both arms back to where they were when the session started (not while recording) |
 | Ctrl+C (in the terminal) | Ends the session; an episode still recording is thrown away and the arms return to their start |
@@ -105,7 +107,7 @@ If the connection drops outside tmux, the session ends safely: the episode being
 4. For each episode: set the scene, press A, do the task, press A to save. If it went wrong, press B instead and do it again.
 5. Press Ctrl+C when you are done. The arms return to where they started.
 
-Every session adds its episodes to the same `--dataset-dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; if you name your tasks with `--task`, a different text in the same folder is fine too, when one model should learn several tasks. If anything does not respond (an arm, a camera, the Quest), call the organizers rather than changing the station's config.
+Every session starts the same way: the dashboard lists the devices, and once every one is ready, A opens the arms. Every session adds its episodes to the same `--dataset-dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; if you name your tasks with `--task`, a different text in the same folder is fine too, when one model should learn several tasks. If a device stays red on the dashboard (an arm, a camera, the Quest), do what it says; if that does not fix it, call the organizers rather than changing the station's config. A camera that was unplugged comes back by itself once it is plugged in again.
 
 Each saved episode is printed with its number. To check the dataset at any point against Dream's own checks, without uploading anything (see [fine-tuning](fine_tuning.md)):
 

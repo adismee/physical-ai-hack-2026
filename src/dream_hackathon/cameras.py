@@ -7,6 +7,7 @@ when the camera has one.
 @see Camera, open_cameras()
 """
 
+import contextlib
 import threading
 import time
 
@@ -18,6 +19,8 @@ from dream_hackathon import config
 
 ## A camera with no new frame for this long is reported as stalled.
 STALL_AFTER_S = 0.5
+## A camera that keeps failing (unplugged, its stream gone) is reopened this often, until it is back.
+REOPEN_EVERY_S = 1.0
 
 
 class CameraError(RuntimeError):
@@ -26,6 +29,9 @@ class CameraError(RuntimeError):
 
 class Camera:
     """One camera, read continuously on a thread; latest() never waits for the device.
+
+    A camera that fails while open (a loose USB cable) is reopened every REOPEN_EVERY_S until it delivers again, so a
+    session does not need restarting when it is plugged back in.
 
     Attributes:
     - role: `overhead`, `wrist_l` or `wrist_r`.
@@ -39,19 +45,18 @@ class Camera:
         @throws CameraError The device cannot be opened, or gives no frame within two seconds.
         """
         self.role = cfg.role
+        self._cfg = cfg
         self._size = (width, height)
-        self._read: _UvcReader | _RealSenseReader = (
-            _RealSenseReader(cfg) if cfg.kind == "realsense" else _UvcReader(cfg)
-        )
+        reader = _open_reader(cfg)
         self._lock = threading.Lock()
         self._frame: npt.NDArray[np.uint8] | None = None
         self._frame_s = 0.0
         self._error: str | None = None
-        self._running = True
-        self._thread = threading.Thread(target=self._run, name=f"camera-{cfg.role}", daemon=True)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(reader,), name=f"camera-{cfg.role}", daemon=True)
         self._thread.start()
         deadline = time.monotonic() + 2.0
-        while self._frame is None and self._error is None and time.monotonic() < deadline:
+        while self._frame is None and time.monotonic() < deadline:
             time.sleep(0.02)
         if self._frame is None:
             self.close()
@@ -68,25 +73,67 @@ class Camera:
             raise CameraError(f"camera '{self.role}' stalled ({self._error or f'no frame for {age_s:.1f} s'})")
         return frame
 
-    def close(self) -> None:
-        self._running = False
-        self._thread.join(timeout=2.0)
+    def problem(self, after_s: float = STALL_AFTER_S) -> str | None:
+        """None while frames arrive; once none has for `after_s`, what is wrong, for the dashboard."""
+        with self._lock:
+            age_s = time.monotonic() - self._frame_s
+        if age_s <= after_s:
+            return None
+        cause = f": {self._error}" if self._error else ""
+        return f"no frame for {age_s:.0f} s{cause}; check its USB cable (it reconnects by itself once it is back)"
 
-    def _run(self) -> None:
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=3.0)
+
+    def _run(self, reader: "_UvcReader | _RealSenseReader | None") -> None:
+        misses_since_s: float | None = None
         try:
-            while self._running:
-                frame = self._read()
+            while not self._stop.is_set():
+                if reader is None:
+                    try:
+                        reader = _open_reader(self._cfg)
+                    except Exception as error:  # noqa: BLE001 - shown by problem() and latest(), tried again
+                        self._error = _describe(error)
+                        self._stop.wait(REOPEN_EVERY_S)
+                        continue
+                try:
+                    frame = reader()
+                except Exception as error:  # noqa: BLE001 - a lost device: reopen it
+                    self._error = _describe(error)
+                    reader = _release(reader)
+                    self._stop.wait(REOPEN_EVERY_S)
+                    continue
                 if frame is None:
+                    # A webcam that was unplugged keeps answering "no frame" at once: reopen it after a while.
                     self._error = "the device returned no frame"
+                    misses_since_s = misses_since_s or time.monotonic()
+                    if time.monotonic() - misses_since_s > REOPEN_EVERY_S:
+                        reader, misses_since_s = _release(reader), None
                     time.sleep(0.01)
                     continue
+                misses_since_s = None
                 small = to_record_size(frame, *self._size)
                 with self._lock:
-                    self._frame, self._frame_s = small, time.monotonic()
-        except Exception as error:  # noqa: BLE001 - reported by latest() on the recording thread
-            self._error = f"{type(error).__name__}: {error}"
+                    self._frame, self._frame_s, self._error = small, time.monotonic(), None
         finally:
-            self._read.release()
+            _release(reader)
+
+
+def _open_reader(cfg: config.CameraConfig) -> "_UvcReader | _RealSenseReader":
+    return _RealSenseReader(cfg) if cfg.kind == "realsense" else _UvcReader(cfg)
+
+
+def _release(reader: "_UvcReader | _RealSenseReader | None") -> None:
+    """Releases a reader, ignoring the errors of one whose device is gone; returns None, the slot's new value."""
+    if reader is not None:
+        with contextlib.suppress(Exception):  # the device is already gone
+            reader.release()
+    return None
+
+
+def _describe(error: BaseException) -> str:
+    return str(error) if isinstance(error, CameraError) else f"{type(error).__name__}: {error}"
 
 
 def open_cameras(cfgs: tuple[config.CameraConfig, ...], width: int, height: int) -> dict[str, Camera]:

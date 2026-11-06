@@ -28,12 +28,12 @@ def board(tmp_path: pathlib.Path):
     frame = np.full((180, 320, 3), 128, np.uint8)
     stalled = {"wrist_r"}
 
-    def frames():
-        if stalled:
-            raise cameras.CameraError("camera 'wrist_r' stalled")
-        return {role: frame for role in layouts.CAMERA_ROLES}
+    def frame_of(role: str):
+        if role in stalled:
+            raise cameras.CameraError(f"camera '{role}' stalled")
+        return frame
 
-    board = dashboard.Dashboard(0, frames, layouts.video_keys("yam"), root, title="test station")
+    board = dashboard.Dashboard(0, frame_of, layouts.video_keys("yam"), root, title="test station")
     board.stalled = stalled
     yield board
     board.close()
@@ -51,10 +51,11 @@ def test_serves_the_page_and_the_state(board: dashboard.Dashboard) -> None:
 
 
 def test_cameras_as_jpeg_and_a_stall_as_503(board: dashboard.Dashboard) -> None:
-    status, body = _get(board, "/api/camera/overhead.jpg")
+    status, body = _get(board, "/api/camera/wrist_r.jpg")
     assert status == 503 and b"stalled" in body
+    assert _get(board, "/api/camera/overhead.jpg")[0] == 200  # one stalled camera leaves the others on the page
     board.stalled.clear()
-    status, body = _get(board, "/api/camera/overhead.jpg")
+    status, body = _get(board, "/api/camera/wrist_r.jpg")
     assert status == 200 and body[:2] == b"\xff\xd8"  # a JPEG
     assert _get(board, "/api/camera/kitchen.jpg")[0] == 404
 
@@ -73,3 +74,18 @@ def test_episodes_and_their_videos_with_ranges(board: dashboard.Dashboard) -> No
         "/meta/info.json",
     ):
         assert _get(board, path)[0] == 404, path
+
+
+def test_the_page_gets_each_devices_state_and_the_phase(board: dashboard.Dashboard) -> None:
+    from dream_hackathon import devices
+
+    board.devices([devices.Status("Quest"), devices.Status("camera wrist_l", "no frame for 3 s; check its USB cable")])
+    board.phase("waiting")
+    state = json.loads(_get(board, "/api/status")[1])
+    assert state["phase"] == "waiting"
+    assert state["devices"] == [
+        {"name": "Quest", "ok": True, "problem": ""},
+        {"name": "camera wrist_l", "ok": False, "problem": "no frame for 3 s; check its USB cable"},
+    ]
+    page = _get(board, "/")[1].decode()
+    assert 'id="devices"' in page and "press A on the right controller" in page

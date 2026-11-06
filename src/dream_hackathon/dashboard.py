@@ -7,9 +7,10 @@ port when you connect, then open http://localhost:8080:
 ssh -L 8080:localhost:8080 <user>@<station>
 ```
 
-The page shows the three cameras as they are recorded, whether an episode is recording, each arm's clutch and tool
-position, warnings, the session's events, and the dataset's episodes with their videos to play back. It only reads:
-nothing on it drives the arms or changes the dataset. `scripts/check_cameras.py` serves the same page with the
+The page shows the three cameras as they are recorded, every device's state with the fix for one that is not ready
+(the Quest, each camera, each arm's link), what the session is waiting for, whether an episode is recording, each
+arm's clutch and tool position, warnings, the session's events, and the dataset's episodes with their videos to play
+back. It only reads: nothing on it drives the arms or changes the dataset. `scripts/check_cameras.py` serves the same page with the
 cameras alone.
 
 @see Dashboard
@@ -31,7 +32,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 
-from dream_hackathon import cameras, dataset
+from dream_hackathon import cameras, dataset, devices
 
 DEFAULT_PORT = 8080
 ## How many of the session's events the page lists.
@@ -50,7 +51,7 @@ class Dashboard:
     def __init__(
         self,
         port: int,
-        frames: Callable[[], dict[str, npt.NDArray[np.uint8]]],
+        frame: Callable[[str], npt.NDArray[np.uint8]],
         video_keys: dict[str, str],
         dataset_root: pathlib.Path | None,
         title: str,
@@ -58,18 +59,20 @@ class Dashboard:
         """Starts serving.
 
         @param port The port; 0 picks a free one.
-        @param frames Returns each camera role's newest frame, at the recording size.
+        @param frame Returns one camera role's newest frame, at the recording size, or raises CameraError.
         @param video_keys Each camera role's dataset video key, to find the episodes' videos.
         @param dataset_root The dataset whose episodes the page lists, or None.
         @param title The page's heading, e.g. the station's name.
         @throws OSError The port is taken.
         """
-        self._frames = frames
+        self._frame = frame
         self._video_keys = video_keys
         self._dataset_root = dataset_root
         self._title = title
         self._lock = threading.Lock()
         self._snapshot: dict[str, Any] = {}
+        self._devices: list[dict[str, Any]] = []
+        self._phase = ""
         self._events: collections.deque[str] = collections.deque(maxlen=_EVENTS_KEPT)
         self._server = http.server.ThreadingHTTPServer(("127.0.0.1", port), _handler_for(self))
         self._server.daemon_threads = True
@@ -80,6 +83,16 @@ class Dashboard:
         """Replaces the session's state the page shows; called from the control loop."""
         with self._lock:
             self._snapshot = snapshot
+
+    def devices(self, statuses: list[devices.Status]) -> None:
+        """Replaces the devices' states the page lists."""
+        with self._lock:
+            self._devices = [status.to_json() for status in statuses]
+
+    def phase(self, text: str) -> None:
+        """Sets the banner over the page: what the session waits for (`waiting`, `ready`, `opening`), or `` once it runs."""
+        with self._lock:
+            self._phase = text
 
     def event(self, line: str) -> None:
         """Adds one line to the page's session log."""
@@ -104,6 +117,8 @@ class Dashboard:
                 "title": self._title,
                 "cameras": list(self._video_keys),
                 "snapshot": self._snapshot,
+                "devices": self._devices,
+                "phase": self._phase,
                 "events": list(self._events),
             }
 
@@ -160,7 +175,7 @@ def _handler_for(board: Dashboard) -> type[http.server.BaseHTTPRequestHandler]:
                 self._send(404, "text/plain", b"no such camera")
                 return
             try:
-                frame = board._frames()[role]
+                frame = board._frame(role)
             except cameras.CameraError as error:
                 self._send(503, "text/plain", str(error).encode())
                 return
@@ -251,6 +266,18 @@ PAGE = """<!doctype html>
   button.link { background: none; border: none; color: inherit; text-decoration: underline; cursor: pointer; padding: 0 4px; }
   video { width: 100%; margin-top: 8px; border-radius: 6px; background: #000; display: none; }
   .muted { color: var(--muted); }
+  #banner { display: none; margin-bottom: 12px; padding: 12px 14px; border-radius: 10px; font-weight: 600;
+            border: 1px solid var(--line); background: var(--panel); }
+  #banner.waiting { display: block; border-color: var(--warn); color: var(--warn); }
+  #banner.ready { display: block; border-color: var(--ok); color: var(--ok); font-size: 16px; }
+  #banner.opening { display: block; }
+  #devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .device { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+  .device .name { font-weight: 600; }
+  .device.ok .name::before { content: "\25CF  "; color: var(--ok); }
+  .device.bad { border-color: var(--rec); }
+  .device.bad .name::before { content: "\25CF  "; color: var(--rec); }
+  .device .problem { color: var(--rec); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -260,6 +287,8 @@ PAGE = """<!doctype html>
   <span id="rec" class="badge">idle</span>
   <label class="muted"><input type="checkbox" id="sound"> sound cues</label>
 </header>
+<div id="banner"></div>
+<section id="devices"></section>
 <section class="cams" id="cams"></section>
 <section class="grid">
   <div class="panel">
@@ -309,11 +338,31 @@ function refreshCamera(role) {
 }
 
 function fmt(v) { return (v >= 0 ? "+" : "") + v.toFixed(3); }
+const BANNERS = {
+  waiting: "Waiting for the devices below: fix what each red one says. The arms are not opened yet.",
+  ready: "Everything is ready: press A on the right controller to open the arms.",
+  opening: "Opening the arms...",
+};
+function renderDevices(status) {
+  const phase = status.phase || "";
+  $("banner").className = phase;
+  $("banner").textContent = BANNERS[phase] || "";
+  $("devices").innerHTML = "";
+  (status.devices || []).forEach((d) => {
+    const div = document.createElement("div");
+    div.className = "device " + (d.ok ? "ok" : "bad");
+    const name = document.createElement("div"); name.className = "name"; name.textContent = d.name + (d.ok ? ": ready" : "");
+    div.appendChild(name);
+    if (!d.ok) { const p = document.createElement("div"); p.className = "problem"; p.textContent = d.problem; div.appendChild(p); }
+    $("devices").appendChild(div);
+  });
+}
 function render(status) {
   $("title").textContent = status.title;
+  renderDevices(status);
   if (cameras.length !== status.cameras.length) buildCameras(status.cameras);
   const s = status.snapshot;
-  $("mode").textContent = s.mode || "camera check";
+  $("mode").textContent = s.mode || (status.phase ? "starting" : "camera check");
   $("mode").className = "badge" + (s.mode === "live" ? " live" : "");
   const recording = !!s.recording;
   $("rec").textContent = recording ? `REC  ${s.frames} frames, ${s.seconds.toFixed(1)} s` : (s.homing ? "homing" : "idle");

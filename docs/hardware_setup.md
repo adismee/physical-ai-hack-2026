@@ -123,7 +123,7 @@ The app reports each controller **relative to the headset**. Turning your head w
 uv run dhk-collect --config configs/station.yaml --dry-run
 ```
 
-A dry run reads the arms and the Quest and never commands a motor. Its status line prints, once a second, each arm's tool position in that arm's base frame. Check two things:
+The session first waits for every device (the Quest, the cameras, both arms' links), printing what each one that is not ready needs, as its dashboard does; once all are ready, press A on the right controller to open the arms. A dry run reads the arms and the Quest and never commands a motor. Its status line prints, once a second, each arm's tool position in that arm's base frame. Check two things:
 
 1. **The arm model.** With the grips released, the tool positions follow the real arms: move an arm by hand, and its tool position changes the way the arm moved. If a joint turns the wrong way on a Metal or Maker arm, flip its entry in `makermods.joint_signs`.
 2. **The controller directions.** Hold the right grip and move your hand forward, left and up: the right tool's position should move the same way. Then do the same for the left. If an axis is wrong, change that arm's `quest_to_base`. Its rows say which Quest axis becomes the base's x, y and z; the Quest's axes are x right, y up and z toward you. The base frames: on a YAM and a Metal arm, x points forward from the arm, y to its left and z up; on a Maker arm (its URDF), -x points forward, +y up and +z to its left. The shipped configs already map the Quest this way for an operator standing behind the arms.

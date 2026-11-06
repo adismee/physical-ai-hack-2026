@@ -44,12 +44,12 @@ def preview(station: config.StationConfig, port: int) -> None:
     """Serves the cameras on the dashboard until Ctrl+C."""
     open_cameras = cameras.open_cameras(station.cameras, station.record_width, station.record_height)
 
-    def frames() -> dict:
-        return {role: camera.latest() for role, camera in open_cameras.items()}
+    def frame(role: str):
+        return open_cameras[role].latest()
 
     try:
         board = dashboard.Dashboard(
-            port, frames, layouts.video_keys(station.family), None, title=f"{socket.gethostname()}: camera check"
+            port, frame, layouts.video_keys(station.family), None, title=f"{socket.gethostname()}: camera check"
         )
     except OSError as error:
         for camera in open_cameras.values():
