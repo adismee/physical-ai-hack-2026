@@ -32,8 +32,10 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
    tmux new -A -s collect                          # keeps the session running if your connection drops
    cd ~/physical-ai-hacks
    uv run dhk-collect --config configs/station.yaml --dry-run      # practice: the arms do not move
-   uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
+   uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes
    ```
+
+   The episodes need no labels: Dream labels every dataset from its overhead camera. `--task "..."` adds a task text of your own, if you want one.
 
    While `dhk-collect` runs, open http://localhost:8080 on your laptop: the dashboard. It shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
 

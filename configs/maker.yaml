@@ -3,7 +3,7 @@
 # docs/hardware_setup.md explains each one.
 
 arm: maker
-task: "pick up the red cube and put it in the bowl"  # the default task text; override with --task
+# task: "pick up the red cube and put it in the bowl"  # optional: a task text for every episode; --task overrides it
 dataset_dir: ~/hackathon_data/my-task                # one LeRobot v2.1 dataset; each session adds to it
 fps: 30                                              # recording rate
 control_hz: 30                                       # teleop loop rate (a multiple of fps)

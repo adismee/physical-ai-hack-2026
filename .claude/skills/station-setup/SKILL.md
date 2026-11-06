@@ -64,7 +64,7 @@ Then set each arm's `workspace_min_m` and `workspace_max_m` from the tool positi
 Give the organizer the live command and the e-stop reminder. It records into a throwaway folder, so the participants' dataset stays empty:
 
 ```bash
-uv run dhk-collect --config configs/station.yaml --task "station test" --dataset-dir ~/hackathon_data/station-test
+uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/station-test
 ```
 
 They drive both arms slowly, record two short episodes with A, and quit with Ctrl+C. Then check the result with `~/dream-env/bin/python tools/finetune.py ~/hackathon_data/station-test --arm <arm> --check`. On a Metal or Maker arm, run `tools/add_eef.py` on it first and check the `-eef` folder.

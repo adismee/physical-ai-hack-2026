@@ -53,3 +53,19 @@ def test_mistakes_name_the_key(tmp_path: pathlib.Path, change, message: str) -> 
 def test_a_missing_file_says_how_to_make_it(tmp_path):
     with pytest.raises(config.ConfigError, match="does not exist: copy your arm's template"):
         config.load(tmp_path / "station.yaml")
+
+
+def test_the_task_text_is_optional(tmp_path):
+    assert "task" not in yaml.safe_load((CONFIGS / "yam.yaml").read_text())
+    path = filled_template("yam", tmp_path)
+    base = yaml.safe_load(path.read_text())
+    for value, expected in ((None, None), ("  ", None), ("  stack the cups ", "stack the cups")):
+        path.write_text(yaml.safe_dump(base if value is None else base | {"task": value}))
+        assert config.load(path).task == expected
+
+
+def test_a_task_that_is_not_text_is_refused(tmp_path):
+    path = filled_template("yam", tmp_path)
+    path.write_text(yaml.safe_dump(yaml.safe_load(path.read_text()) | {"task": 3}))
+    with pytest.raises(config.ConfigError, match="'task' is 3"):
+        config.load(path)

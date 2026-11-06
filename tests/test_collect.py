@@ -211,3 +211,10 @@ def test_homing_gives_up_after_its_timeout(tmp_path: pathlib.Path) -> None:
     arms_.joints["left"] = START + 0.1
     collector.go_home(timeout_s=0.05)
     assert not collector.homing and any("did not reach their start" in line for line in logs)
+
+
+def test_the_task_falls_back_to_a_neutral_text():
+    assert collect.choose_task(" stack the cups ", "from the config") == "stack the cups"
+    assert collect.choose_task(None, "from the config") == "from the config"
+    assert collect.choose_task("  ", None) == collect.DEFAULT_TASK
+    assert collect.DEFAULT_TASK.strip()

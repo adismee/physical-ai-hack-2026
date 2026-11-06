@@ -45,6 +45,6 @@ A queued job runs to its end and cannot be cancelled. If training fails, the job
 
 ## Several sessions, several tasks
 
-Every session you collect into the same folder becomes one dataset, and one fine-tune can learn several tasks if each episode carries its own task text. To train on two folders together, put both inside one parent folder and upload the parent: the platform reads each subfolder as one session. On Metal and Maker arms, run `tools/add_eef.py` on each folder first and put the `-eef` folders in the parent.
+Every session you collect into the same folder becomes one dataset, and one fine-tune can learn several tasks. Labels are optional: Dream's service labels every dataset from its overhead camera when it processes it, and a `--task` text you recorded travels with the episodes too. To train on two folders together, put both inside one parent folder and upload the parent: the platform reads each subfolder as one session. On Metal and Maker arms, run `tools/add_eef.py` on each folder first and put the `-eef` folders in the parent.
 
 Next: [run your model](running_your_model.md).

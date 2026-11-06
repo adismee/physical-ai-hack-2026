@@ -1,7 +1,8 @@
 """Records Quest-teleoperated demonstrations into a LeRobot v2.1 dataset.
 
 ```
-uv run dhk-collect --config configs/yam.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/cubes
+uv run dhk-collect --config configs/yam.yaml --dataset-dir ~/hackathon_data/cubes
+uv run dhk-collect --config configs/yam.yaml --dataset-dir ~/hackathon_data/cubes --task "put the red cube in the bowl"
 uv run dhk-collect --config configs/yam.yaml --dry-run     # read only: shows the targets, moves nothing
 uv run dhk-collect --config configs/yam.yaml --sim         # YAM: i2rt's simulated arms, blank camera frames
 ```
@@ -52,6 +53,10 @@ SNAPSHOT_EVERY_S = 0.2
 WARNING_SHOWN_S = 10.0
 ## Where a session's output goes once its terminal is gone (a lost SSH connection).
 LOG_PATH = pathlib.Path("~/.cache/dream_hackathon/collect.log").expanduser()
+## The task text an episode records when neither `--task` nor the config names one. A task text is optional for
+## the participant, since Dream's service labels every dataset from its head camera, but the LeRobot v2.1 files
+## (and Dream's checks of them) need one non-empty text per episode.
+DEFAULT_TASK = "do the demonstrated task"
 
 ## Frames by camera role, at the recording size.
 FrameSource = Callable[[], dict[str, npt.NDArray[np.uint8]]]
@@ -474,11 +479,23 @@ def _state_names(station: config.StationConfig) -> list[str]:
     return names
 
 
+def choose_task(*texts: str | None) -> str:
+    """The first of `texts` that is not blank, stripped; DEFAULT_TASK when all are."""
+    for text in texts:
+        if text and text.strip():
+            return text.strip()
+    return DEFAULT_TASK
+
+
 def main(argv: list[str] | None = None) -> None:
     """The `dhk-collect` command."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--config", required=True, help="the station config, e.g. configs/yam.yaml")
-    parser.add_argument("--task", help="the task text recorded with each episode (default: the config's)")
+    parser.add_argument(
+        "--task",
+        help="optional: a task text recorded with each episode (default: the config's task, else a neutral text; "
+        "Dream labels every dataset from its overhead camera)",
+    )
     parser.add_argument("--dataset-dir", help="the dataset folder episodes are added to (default: the config's)")
     parser.add_argument("--dry-run", action="store_true", help="read the arms and the Quest; command nothing")
     parser.add_argument("--sim", action="store_true", help="YAM: i2rt's simulated arms and blank camera frames")
@@ -499,7 +516,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         run(
             station,
-            args.task or station.task,
+            choose_task(args.task, station.task),
             dry_run=args.dry_run,
             sim=args.sim,
             quest_ip=args.quest_ip,

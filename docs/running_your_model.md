@@ -19,7 +19,7 @@ dreamcli robot run --checkpoint dream-1-ft:<account>-myteam-cubes --task "put th
 dreamcli robot run --checkpoint dream-1-ft:<account>-myteam-cubes --task "put the red cube in the bowl" --dry-run
 ```
 
-A dry run calls the model for real and writes nothing to the arms. The first call to a new model waits while the model starts, which can take up to an hour; later calls answer in well under a second. Use the same task text you recorded.
+A dry run calls the model for real and writes nothing to the arms. The first call to a new model waits while the model starts, which can take up to an hour; later calls answer in well under a second. `--task` is the instruction the model gets: describe the task in plain words, and if you recorded with `--task`, use that same text.
 
 ## 3. Run it
 

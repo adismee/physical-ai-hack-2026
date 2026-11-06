@@ -27,11 +27,13 @@ Your station is already set up; this is where you start. You teach the model by 
 
    While it runs, open http://localhost:8080 in your laptop's browser: the dashboard shows the cameras, the arms and your episodes. The page is there only while `dhk-collect` runs; before that, the browser cannot connect.
 
-4. Start the session, with your task and your team's own dataset folder:
+4. Start the session, with your team's own dataset folder:
 
    ```bash
-   uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
+   uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes
    ```
+
+   No task text or other labels are needed: Dream's service labels every dataset from its overhead camera when it processes it. To name the task yourself anyway, add `--task "put the red cube in the bowl"`.
 
 5. For each episode: set the scene, press A, do the task, press A again to save it (B throws it away). Press Ctrl+C when you are done.
 
@@ -92,16 +94,18 @@ If the connection drops outside tmux, the session ends safely: the episode being
    uv run dhk-collect --config configs/station.yaml --dry-run
    ```
 
-3. Start the session. The task text is what the model learns to follow, so write it the way you will ask the robot. Give your dataset a folder of its own, named for your team and task:
+3. Start the session. Give your dataset a folder of its own, named for your team and task:
 
    ```bash
-   uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
+   uv run dhk-collect --config configs/station.yaml --dataset-dir ~/hackathon_data/myteam-cubes
    ```
+
+   You do not need to label the episodes: when Dream processes the dataset, its service writes dense text labels for it from the overhead camera. A task text of your own is optional: `--task "put the red cube in the bowl"` records it with each episode, so write it the way you will ask the robot. Without it, each episode records the neutral text `do the demonstrated task`, since the dataset format needs one.
 
 4. For each episode: set the scene, press A, do the task, press A to save. If it went wrong, press B instead and do it again.
 5. Press Ctrl+C when you are done. The arms return to where they started.
 
-Every session adds its episodes to the same `--dataset-dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; a different `--task` text in the same folder is fine too, when one model should learn several tasks. If anything does not respond (an arm, a camera, the Quest), call the organizers rather than changing the station's config.
+Every session adds its episodes to the same `--dataset-dir`, so you can stop and continue later, or switch operators. Use one dataset folder per task; if you name your tasks with `--task`, a different text in the same folder is fine too, when one model should learn several tasks. If anything does not respond (an arm, a camera, the Quest), call the organizers rather than changing the station's config.
 
 Each saved episode is printed with its number. To check the dataset at any point against Dream's own checks, without uploading anything (see [fine-tuning](fine_tuning.md)):
 

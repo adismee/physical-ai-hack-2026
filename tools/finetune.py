@@ -143,7 +143,7 @@ def main() -> None:
     model = wait_for_model(client, job_id)
     print(f"\nyour model: {model}")
     print("try it without moving the arms first, from the robot's computer in ~/dream-env:")
-    print(f'  dreamcli robot run --checkpoint {model} --task "<your task text>" --dry-run')
+    print(f'  dreamcli robot run --checkpoint {model} --task "<the task, in plain words>" --dry-run')
 
 
 if __name__ == "__main__":

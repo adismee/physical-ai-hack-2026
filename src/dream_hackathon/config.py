@@ -120,7 +120,8 @@ class StationConfig:
     Attributes:
     - arm: `yam`, `metal` or `maker`.
     - family: `yam` or `makermods` (layouts.FAMILIES).
-    - task: The default task text recorded with each episode.
+    - task: The task text recorded with each episode when `dhk-collect` gets no `--task`, or None (the collector
+      then records collect.DEFAULT_TASK). Optional: Dream's service labels every dataset from its head camera.
     - dataset_dir: The LeRobot v2.1 dataset folder episodes are added to.
     - fps: Recording rate.
     - control_hz: Teleop loop rate, a whole multiple of fps.
@@ -134,7 +135,7 @@ class StationConfig:
 
     arm: str
     family: str
-    task: str
+    task: str | None
     dataset_dir: pathlib.Path
     fps: int
     control_hz: int
@@ -195,7 +196,7 @@ def load(path: str | pathlib.Path) -> StationConfig:
     return StationConfig(
         arm=arm,
         family=family,
-        task=_get(raw, "task", str),
+        task=_task(raw),
         dataset_dir=pathlib.Path(_get(raw, "dataset_dir", str)).expanduser(),
         fps=fps,
         control_hz=control_hz,
@@ -219,6 +220,16 @@ def _placeholder(raw: Any, where: str = "") -> str | None:
     elif isinstance(raw, str) and PLACEHOLDER in raw:
         return where
     return None
+
+
+def _task(raw: dict[str, Any]) -> str | None:
+    """The optional `task` text, stripped; None when it is left out or blank."""
+    value = raw.get("task")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(f"'task' is {value!r}; expected text in quotes, or leave the key out")
+    return value.strip() or None
 
 
 def _get(raw: dict[str, Any], key: str, kind: type, where: str | None = None) -> Any:
