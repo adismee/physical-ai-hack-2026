@@ -500,3 +500,60 @@ def test_reconnect_restarts_the_app_on_a_new_reader(monkeypatch):
     assert len(FakeOculusReader.made) == 2 and first.stopped and not FakeOculusReader.made[1].stopped
     assert shell == [f"am force-stop {quest.APP}"]
     assert headset.data_age_s() == float("inf")  # no data from the new reader yet
+
+
+def test_an_a_held_when_the_data_comes_back_is_not_a_press(monkeypatch):
+    class Reader(FakeOculusReader):
+        transforms: dict = {}
+        buttons: dict = {}
+
+        def get_transformations_and_buttons(self):
+            return Reader.transforms, Reader.buttons
+
+    monkeypatch.setitem(__import__("sys").modules, "oculus_reader.reader", type("m", (), {"OculusReader": Reader}))
+    monkeypatch.setattr(quest, "adb_devices", lambda: ADB_HEADER + "1WMHH0000000AB\tdevice\n")
+    headset = quest.Quest()
+    assert headset.read().pressed == frozenset()  # no data yet
+    Reader.transforms, Reader.buttons = {"r": np.eye(4), "l": np.eye(4)}, {"A": True}
+    assert headset.read().pressed == frozenset()  # A was down when the data came: held, not pressed
+    Reader.transforms, Reader.buttons = {"r": np.eye(4), "l": np.eye(4)}, {"A": False}
+    assert headset.read().pressed == frozenset()
+    Reader.transforms, Reader.buttons = {"r": np.eye(4), "l": np.eye(4)}, {"A": True}
+    assert headset.read().pressed == frozenset({"A"})  # a real press
+
+
+def test_an_a_in_the_moment_everything_becomes_ready_does_not_open_the_arms(tmp_path):
+    station = Station(tmp_path)
+    station.broken_cameras = {"wrist_l"}
+    opened, logs, ready_at = [], [], []
+
+    def log(line: str) -> None:
+        logs.append(line)
+        if "everything is ready" in line:
+            ready_at.append(clock.now)
+
+    def script(now: float) -> None:
+        if now > 3:
+            station.broken_cameras.clear()
+        if ready_at and now - ready_at[0] < 0.5:
+            station.headset.press.add("A")  # pressed as the session becomes ready: ignored
+        if ready_at and now - ready_at[0] > 3:
+            station.headset.press.add("A")
+
+    def open_arms(cfg, *, energize, sim):
+        opened.append(clock.now)
+        return "the arms"
+
+    clock = Clock(script)
+    collect.wait_and_open_arms(
+        station.config,
+        station.found,
+        None,
+        log,
+        dry_run=True,
+        sim=False,
+        open_arms=open_arms,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    assert len(opened) == 1 and opened[0] - ready_at[0] > 3

@@ -84,6 +84,7 @@ class Quest:
         self._last_transforms: Any = None
         self._last_change_s = 0.0
         self._ever_changed = False
+        self._fresh = False
         self._held: set[str] = set()
 
     def read(self) -> QuestState:
@@ -95,6 +96,12 @@ class Quest:
             self._last_change_s = now
             self._ever_changed = self._ever_changed or bool(transforms)
         is_fresh = bool(transforms) and now - self._last_change_s < STALE_AFTER_S
+        if is_fresh and not self._fresh:
+            # The data just started, or came back after a gap (a restarted app, a headset that slept): a button that
+            # is down already was pressed while nothing was read, so it counts as held, never as a new press.
+            self._held.clear()
+            self._held.update(name for name in BUTTONS if (buttons or {}).get(name) is True)
+        self._fresh = is_fresh
         return parse(transforms if is_fresh else {}, buttons or {}, self._held)
 
     def data_age_s(self) -> float:
@@ -115,7 +122,7 @@ class Quest:
         old.running = False  # its log thread ends at its next line, at once when its stream is gone
         adb_shell(f"am force-stop {APP}", self._ip_address)
         self._reader = OculusReader(ip_address=self._ip_address)  # starts the app in front, and a new stream
-        self._last_transforms, self._last_change_s, self._ever_changed = None, 0.0, False
+        self._last_transforms, self._last_change_s, self._ever_changed, self._fresh = None, 0.0, False, False
         old.stop()
 
     def close(self) -> None:

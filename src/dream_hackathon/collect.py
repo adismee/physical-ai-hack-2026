@@ -82,6 +82,9 @@ DEFAULT_TASK = "do the demonstrated task"
 CHECK_EVERY_S = 1.0
 ## How often the Quest is read while the session waits for A.
 WAIT_TICK_S = 0.05
+## A opens the arms only once everything has been ready this long: a press in the moment the Quest's data comes back
+## is not taken for one.
+A_AFTER_READY_S = 1.0
 
 ## Frames by camera role, at the recording size.
 FrameSource = Callable[[], dict[str, npt.NDArray[np.uint8]]]
@@ -434,7 +437,9 @@ def wait_and_open_arms(
 
     Every CHECK_EVERY_S it tries the devices that are not open yet and shows each one's state on the page and, when
     it changes, in the terminal. Nothing opens the arms before A (a simulated YAM needs no A): on a YAM, opening them
-    makes them hold their pose and sweep the grippers. Arms that fail to open are reported, and A tries again.
+    makes them hold their pose and sweep the grippers. A counts only once everything has been ready A_AFTER_READY_S,
+    and only as a new press (Quest.read() never reports a button that was down when its data came back). Arms that
+    fail to open are reported, and A tries again.
 
     @param reported Each device's last reported problem, filled in here so the session's monitor goes on from it.
     @return The open arms.
@@ -444,6 +449,7 @@ def wait_and_open_arms(
     phase = ""
     arm_error: str | None = None
     ready = False
+    ready_since_s = 0.0
     next_check_s = clock()
     while True:
         if clock() >= next_check_s:
@@ -465,9 +471,11 @@ def wait_and_open_arms(
                 waiting_for = [name for name, problem in reported.items() if problem is not None and name != "arms"]
                 log(f"waiting for: {', '.join(waiting_for)} (the dashboard says what each needs)")
             elif phase == "ready":
+                ready_since_s = clock()
                 log("everything is ready: press A on the right controller to open the arms (Ctrl+C quits)")
         pressed = found.headset.read().pressed if found.headset is not None else frozenset()
-        if phase == "opening" or (phase == "ready" and "A" in pressed):
+        settled = clock() - ready_since_s >= A_AFTER_READY_S
+        if phase == "opening" or (phase == "ready" and settled and "A" in pressed):
             if board is not None:
                 board.phase("opening")
             log("opening the arms" + ("" if dry_run or sim else ": keep clear of them and of the grippers' jaws"))
