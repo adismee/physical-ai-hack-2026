@@ -43,15 +43,20 @@ Set its `dataset_dir` to where datasets should go by default; participants usual
 
 ### YAM arms
 
-The YAM arms talk over CAN, one USB-CAN adapter per arm, at 1 Mbit/s. Follow i2rt's guide to [give each adapter a fixed name](https://github.com/i2rt-robotics/i2rt/blob/main/docs/guides/set-persistent-can-ids.md), `can_follower_l` and `can_follower_r`. Plug in one adapter at a time while you do. Then bring the interfaces up:
+The YAM arms talk over CAN, one USB-CAN adapter per arm, at 1 Mbit/s, and the kit expects the two links to be called `can_follower_l` and `can_follower_r`. The Dream setup wizard (`dreamcli setup`, step 6) names them: it writes a udev rule, `/etc/udev/rules.d/90-dreamlabs-can.rules`, that names each link after its adapter's serial number. Without the wizard, i2rt's guide [gives each adapter a fixed name](https://github.com/i2rt-robotics/i2rt/blob/main/docs/guides/set-persistent-can-ids.md) by hand (plug in one adapter at a time while you do).
+
+The rule applies only when an adapter is added, never to a link that already exists, so right after the wizard the links are still `can0` and `can1`. Close the wizard first (it holds the links while it runs), then apply the rule and bring both links up:
 
 ```bash
-ip link show                                          # both names are listed
+sudo ip link set can0 down
+sudo ip link set can1 down
+sudo udevadm trigger --action=add --subsystem-match=net
+ip -br link show type can        # should now list can_follower_l and can_follower_r
 sudo ip link set can_follower_l up type can bitrate 1000000
 sudo ip link set can_follower_r up type can bitrate 1000000
 ```
 
-i2rt's README explains how to bring them up on every boot. In your config, `arms.left.port` and `arms.right.port` are these names, and `yam.gripper` is your gripper type (`linear_4310` for the stock gripper).
+If `ip -br link show type can` still lists `can0` and `can1`, reboot instead (the rule applies at boot), then run the last two lines. The links come up down after every reboot: bring them up again with the last two lines (`dreamcli robot up` does this for its own runs), or see i2rt's README to bring them up on every boot. In your config, `arms.left.port` and `arms.right.port` are these names, and `yam.gripper` is your gripper type (`linear_4310` for the stock gripper).
 
 When the collector opens a YAM arm, i2rt holds it where it is. It also sweeps each linear gripper with a small force to find its travel, so keep fingers clear of the jaws.
 
