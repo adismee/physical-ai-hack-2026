@@ -5,6 +5,7 @@ import pathlib
 
 import dream
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 from conftest import write_episodes
 
@@ -64,3 +65,38 @@ def test_a_dataset_recorded_another_way_is_refused(tmp_path: pathlib.Path) -> No
         dataset.DatasetWriter(root, 15, "yam", [f"v{i}" for i in range(14)], keys, 320, 180)
     with pytest.raises(dataset.DatasetError, match="cameras"):
         dataset.DatasetWriter(root, 30, "yam", [f"v{i}" for i in range(14)], keys[:2], 320, 180)
+
+
+def test_dropping_episodes_renumbers_the_rest_and_dream_still_accepts_it(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "task"
+    write_episodes(root, "yam", episodes=5, frames=50, tasks=["a", "b", "c", "d", "e"])
+    left = dataset.drop_episodes(root, {1, 3})
+    assert left == 3
+    episodes = dataset.list_episodes(root)
+    assert [(e.index, e.tasks) for e in episodes] == [(0, ("a",)), (1, ("c",)), (2, ("e",))]
+    first_frame = 0
+    for episode in episodes:
+        table = pq.read_table(root / f"data/chunk-000/episode_{episode.index:06d}.parquet")
+        assert set(table.column("episode_index").to_pylist()) == {episode.index}
+        assert table.column("index").to_pylist() == list(range(first_frame, first_frame + 50))
+        first_frame += 50
+    for key in layouts.video_keys("yam").values():
+        assert sorted(p.name for p in (root / "videos/chunk-000" / key).iterdir()) == [
+            f"episode_{i:06d}.mp4" for i in range(3)
+        ]
+    info = json.loads((root / "meta" / "info.json").read_text())
+    assert (info["total_episodes"], info["total_frames"], info["total_videos"]) == (3, 150, 9)
+    report = dream.datasets.validate_dataset(root, layouts.embodiment("yam"))
+    assert report.ok, report.error
+    # A new session continues the numbering after the drop.
+    write_episodes(root, "yam", episodes=1, frames=50, tasks=["f"])
+    assert [e.index for e in dataset.list_episodes(root)] == [0, 1, 2, 3]
+    assert dream.datasets.validate_dataset(root, layouts.embodiment("yam")).ok
+
+
+def test_dropping_an_unknown_episode_changes_nothing(tmp_path: pathlib.Path) -> None:
+    root = tmp_path / "task"
+    write_episodes(root, "yam", episodes=2, frames=50, tasks=["a"])
+    with pytest.raises(dataset.DatasetError, match="no episode 5"):
+        dataset.drop_episodes(root, {0, 5})
+    assert len(dataset.list_episodes(root)) == 2

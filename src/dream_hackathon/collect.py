@@ -11,6 +11,10 @@ again, saves it; B discards it; the right joystick click sends both arms back to
 recording). Ctrl+C ends the session: an episode still recording is discarded, and the arms return to where they
 started before the vendor's shutdown releases them.
 
+Over SSH: the session serves a browser dashboard on the station's loopback address (dashboard.py says how to open
+it). A lost connection or a `kill` ends the session the same safe way as Ctrl+C, with the rest of its output in
+LOG_PATH; run it inside tmux to keep it going instead. Only one program drives the arms at a time (station_lock.py).
+
 The loop runs at the config's `control_hz`; every `control_hz / fps`-th tick is recorded: the measured joints and
 grippers as `observation.state`, the commanded ones as `action`, and each camera's newest frame.
 
@@ -19,15 +23,19 @@ grippers as `observation.state`, the commanded ones as `action`, and each camera
 
 import argparse
 import dataclasses
+import os
 import pathlib
+import signal
+import socket
 import sys
 import time
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from dream_hackathon import arms, cameras, config, dataset, ik, layouts, quest, teleop
+from dream_hackathon import arms, cameras, config, dashboard, dataset, ik, layouts, quest, station_lock, teleop
 
 ## Homing and the end-of-session return move every joint at most this fast.
 HOME_SPEED_RAD_S = 0.5
@@ -35,8 +43,15 @@ HOME_SPEED_RAD_S = 0.5
 HOME_TOLERANCE_RAD = 1e-3
 ## A live arm whose measured joints fall this far behind the command is re-synced and its clutch released.
 MAX_TRACKING_ERROR_RAD = 0.35
-## How often the status line is printed.
+## Homing gives up (and the arms stop where they are) after this long.
+HOME_TIMEOUT_S = 30.0
+## How often the status line is printed, and how often the dashboard's state is refreshed.
 STATUS_EVERY_S = 1.0
+SNAPSHOT_EVERY_S = 0.2
+## How long a warning stays on the dashboard.
+WARNING_SHOWN_S = 10.0
+## Where a session's output goes once its terminal is gone (a lost SSH connection).
+LOG_PATH = pathlib.Path("~/.cache/dream_hackathon/collect.log").expanduser()
 
 ## Frames by camera role, at the recording size.
 FrameSource = Callable[[], dict[str, npt.NDArray[np.uint8]]]
@@ -103,6 +118,7 @@ class Collector:
             )
             for side, arm in station.arms.items()
         }
+        self._warnings: list[tuple[float, str]] = []
         self.homing = False
         self.episode: dataset.Episode | None = None
 
@@ -119,32 +135,65 @@ class Collector:
             self._resync_lagging(measured)
             self._robot.command(self._command.joints, self._command.grips)
         if self.episode is not None and self._ticks % self._record_every == 0:
-            images = self._frames()
-            self.episode.add_frame(
-                layouts.to_vector(self._station.arm, measured, measured_grips),
-                layouts.to_vector(self._station.arm, self._command.joints, self._command.grips),
-                {self._video_keys[role]: frame for role, frame in images.items()},
-            )
+            try:
+                images = self._frames()
+            except cameras.CameraError as error:
+                # An episode missing a camera's frames cannot train; teleop goes on, and the next one can record.
+                self._warn(f"{error}: the episode is discarded")
+                self.discard()
+            else:
+                self.episode.add_frame(
+                    layouts.to_vector(self._station.arm, measured, measured_grips),
+                    layouts.to_vector(self._station.arm, self._command.joints, self._command.grips),
+                    {self._video_keys[role]: frame for role, frame in images.items()},
+                )
         self._ticks += 1
 
-    def status(self) -> str:
-        """One line: what is recording, and per arm whether it is engaged and where its tool target is."""
-        parts = [f"REC {self.episode.frames} frames" if self.episode is not None else "idle"]
-        if self.homing:
-            parts.append("homing")
+    def snapshot(self) -> dict[str, Any]:
+        """The session's state, for the dashboard and the status line; call it from the loop's thread (it runs FK).
+
+        @return A JSON-ready dict: `mode`, `recording`, `frames`, `seconds`, `episodes`, `task`, `dataset`, `homing`,
+            per side under `arms` its `engaged`, `tool_m` and `grip`, the recent `warnings`, and `control_hz`.
+        """
+        now = time.monotonic()
+        self._warnings = [(when, text) for when, text in self._warnings if now - when < WARNING_SHOWN_S]
+        per_arm = {}
         for side in ("left", "right"):
             xyz = self._iks[side].fk(self._command.joints[side])[:3, 3]
-            engaged = "ON " if self._clutches[side].engaged else "off"
-            parts.append(f"{side} {engaged} tool [{xyz[0]:+.3f} {xyz[1]:+.3f} {xyz[2]:+.3f}] m")
-        return " | ".join(parts)
+            per_arm[side] = {
+                "engaged": self._clutches[side].engaged,
+                "tool_m": [round(float(value), 4) for value in xyz],
+                "grip": round(float(self._command.grips[side]), 3),
+            }
+        frames = self.episode.frames if self.episode is not None else 0
+        return {
+            "mode": "live" if self._robot.energized else "dry run",
+            "recording": self.episode is not None,
+            "frames": frames,
+            "seconds": frames / self._station.fps,
+            "episodes": self._writer.total_episodes,
+            "task": self._task,
+            "dataset": str(self._writer.root),
+            "homing": self.homing,
+            "arms": per_arm,
+            "warnings": [text for _, text in self._warnings],
+            "control_hz": self._station.control_hz,
+        }
 
-    def go_home(self) -> None:
-        """Brings the command back to where the arms started, at HOME_SPEED_RAD_S, ticking until it is there."""
+    def go_home(self, timeout_s: float = HOME_TIMEOUT_S) -> None:
+        """Brings the arms back to where they started at HOME_SPEED_RAD_S, ticking until they arrive or time is up."""
         self.homing = True
+        deadline_s = time.monotonic() + timeout_s
         while self.homing:
+            if time.monotonic() > deadline_s:
+                self._warn("the arms did not reach their start in time: stopping where they are")
+                self.homing = False
+                return
             started_s = time.perf_counter()
             self._step_home()
             if self._robot.energized:
+                measured, _ = self._robot.read()
+                self._resync_lagging(measured)
                 self._robot.command(self._command.joints, self._command.grips)
             time.sleep(max(0.0, self._dt_s - (time.perf_counter() - started_s)))
 
@@ -211,18 +260,34 @@ class Collector:
         if done:
             self.homing = False
 
+    def _warn(self, text: str) -> None:
+        """Logs a warning and shows it on the dashboard for WARNING_SHOWN_S."""
+        self._log(f"warning: {text}")
+        self._warnings.append((time.monotonic(), text))
+
     def _resync_lagging(self, measured: arms.Joints) -> None:
         """Re-syncs an arm that cannot follow (blocked, or stalled) to where it is, and releases its clutch."""
         for side, joints in measured.items():
             error = float(np.max(np.abs(self._command.joints[side] - joints)))
             if error > MAX_TRACKING_ERROR_RAD:
-                self._log(f"{side} arm is {np.degrees(error):.0f} deg behind its target: holding where it is")
+                self._warn(f"{side} arm is {np.degrees(error):.0f} deg behind its target: holding where it is")
                 self._command.joints[side] = joints.copy()
                 self._clutches[side].engaged = False
 
 
-def run(station: config.StationConfig, task: str, *, dry_run: bool, sim: bool, quest_ip: str | None) -> None:
-    """Opens the devices, runs the loop until Ctrl+C, then shuts everything down safely."""
+def run(
+    station: config.StationConfig,
+    task: str,
+    *,
+    dry_run: bool,
+    sim: bool,
+    quest_ip: str | None,
+    dashboard_port: int = dashboard.DEFAULT_PORT,
+) -> None:
+    """Opens the devices, runs the loop until Ctrl+C (or a lost SSH connection), then shuts everything down safely.
+
+    @throws StationBusyError Another program (a collector, a check, `dreamcli`) holds the station's arms.
+    """
     iks = arms.open_ik(station)  # first: a missing tool center point stops here, before any device opens
     writer = dataset.DatasetWriter(
         station.dataset_dir,
@@ -233,7 +298,34 @@ def run(station: config.StationConfig, task: str, *, dry_run: bool, sim: bool, q
         station.record_width,
         station.record_height,
     )
-    headset = quest.Quest(quest_ip)
+    # A simulated YAM drives no hardware, so it takes no lock.
+    lock = None if sim else station_lock.acquire("dhk-collect", station.dataset_dir.resolve())
+    try:
+        _run_locked(station, task, iks, writer, dry_run=dry_run, sim=sim, quest_ip=quest_ip, port=dashboard_port)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _run_locked(
+    station: config.StationConfig,
+    task: str,
+    iks: dict[str, ik.ArmIK],
+    writer: dataset.DatasetWriter,
+    *,
+    dry_run: bool,
+    sim: bool,
+    quest_ip: str | None,
+    port: int,
+) -> None:
+    """run() with the station's lock held."""
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGHUP, _hang_up)
+    if os.environ.get("SSH_CONNECTION") and not (os.environ.get("TMUX") or os.environ.get("STY")):
+        _say(
+            "note: this session runs over SSH outside tmux. If the connection drops it ends, safely (the arms return "
+            "and are released); start it inside `tmux new -A -s collect` to keep it running instead."
+        )
     open_cameras: dict[str, cameras.Camera] = {}
     blank = np.zeros((station.record_height, station.record_width, 3), dtype=np.uint8)
 
@@ -243,46 +335,131 @@ def run(station: config.StationConfig, task: str, *, dry_run: bool, sim: bool, q
     def camera_frames() -> dict[str, npt.NDArray[np.uint8]]:
         return {role: camera.latest() for role, camera in open_cameras.items()}
 
+    frames: FrameSource = blank_frames if sim else camera_frames
+    board = _open_dashboard(station, frames, port)
+
+    def log(line: str) -> None:
+        _say(line)
+        if board is not None:
+            board.event(line)
+
+    headset = quest.Quest(quest_ip)
     try:
         if not sim:
             open_cameras = cameras.open_cameras(station.cameras, station.record_width, station.record_height)
         robot = arms.open_arms(station, energize=not dry_run, sim=sim)
         collector = None
         try:
-            frames = blank_frames if sim else camera_frames
-            collector = Collector(station, task, robot, headset, frames, iks, writer)
-            _loop(collector, 1.0 / station.control_hz)
+            collector = Collector(station, task, robot, headset, frames, iks, writer, log=log)
+            _loop(collector, 1.0 / station.control_hz, board)
         finally:
-            if collector is not None:
-                collector.discard()
-                if robot.energized:
-                    print("\nreturning the arms to where they started...")
-                    collector.go_home()
-            robot.close()
+            # From here the shutdown runs to its end: a hang-up, a kill or another Ctrl+C would leave the arms
+            # wherever they are. The emergency stop is the way to halt it.
+            for stop_signal in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                signal.signal(stop_signal, signal.SIG_IGN)
+            try:
+                if collector is not None:
+                    collector.discard()
+                    if robot.energized:
+                        log("returning the arms to where they started (the emergency stop halts them)...")
+                        collector.go_home()
+            finally:
+                robot.close()
+                log("session ended")
     finally:
         for camera in open_cameras.values():
             camera.close()
         headset.close()
+        if board is not None:
+            board.close()
 
 
-def _loop(collector: Collector, period_s: float) -> None:
+def _open_dashboard(station: config.StationConfig, frames: FrameSource, port: int) -> dashboard.Dashboard | None:
+    """Starts the dashboard and says how to open it; a taken port leaves the session without one."""
+    if not port:
+        return None
+    try:
+        board = dashboard.Dashboard(
+            port,
+            frames,
+            layouts.video_keys(station.family),
+            station.dataset_dir,
+            title=f"{socket.gethostname()}: {station.arm} station",
+        )
+    except OSError as error:
+        _say(f"dashboard: port {port} is not free ({error}); going on without it (--dashboard-port picks another)")
+        return None
+    _say(board.how_to_open())
+    return board
+
+
+def _loop(collector: Collector, period_s: float, board: dashboard.Dashboard | None = None) -> None:
     """Ticks at a steady rate until Ctrl+C; a late tick starts the next one at once rather than catching up."""
-    print(
-        "ready: hold a grip to drive an arm, A to record, B to discard, right joystick click to home, Ctrl+C to quit"
-    )
+    _say("ready: hold a grip to drive an arm, A to record, B to discard, right joystick click to home, Ctrl+C to quit")
     next_s = time.perf_counter()
-    status_s = next_s
+    snapshot_s = status_s = next_s
+    ticks = 0
     try:
         while True:
             collector.tick()
+            ticks += 1
             now = time.perf_counter()
-            if now >= status_s:
-                print(collector.status(), flush=True)
-                status_s = now + STATUS_EVERY_S
+            if now >= snapshot_s:
+                snapshot = collector.snapshot()
+                snapshot["loop_hz"] = ticks / max(now - snapshot_s + SNAPSHOT_EVERY_S, 1e-6)
+                ticks = 0
+                if board is not None:
+                    board.publish(snapshot)
+                if now >= status_s:
+                    _say(_status_line(snapshot))
+                    status_s = now + STATUS_EVERY_S
+                snapshot_s = now + SNAPSHOT_EVERY_S
             next_s = max(next_s + period_s, now)
             time.sleep(max(0.0, next_s - time.perf_counter()))
     except KeyboardInterrupt:
         pass
+
+
+def _status_line(snapshot: dict[str, Any]) -> str:
+    """The terminal's status line: what is recording, and per arm whether it is driving and where its tool is."""
+    parts = [f"REC {snapshot['frames']} frames" if snapshot["recording"] else "idle"]
+    if snapshot["homing"]:
+        parts.append("homing")
+    for side in ("left", "right"):
+        arm = snapshot["arms"][side]
+        x, y, z = arm["tool_m"]
+        parts.append(f"{side} {'ON ' if arm['engaged'] else 'off'} tool [{x:+.3f} {y:+.3f} {z:+.3f}] m")
+    return " | ".join(parts)
+
+
+def _say(line: str) -> None:
+    """Prints a line; once the terminal is gone (a lost SSH connection), writes it to LOG_PATH instead."""
+    try:
+        print(line, flush=True)
+    except OSError:
+        _log_to_file()
+        print(line, flush=True)
+
+
+def _log_to_file() -> None:
+    """Sends the rest of the session's output to LOG_PATH: writing to a closed terminal would fail the shutdown."""
+    if getattr(sys.stdout, "name", None) == str(LOG_PATH):
+        return
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    sys.stdout = sys.stderr = open(LOG_PATH, "a", buffering=1, encoding="utf-8")  # noqa: SIM115 - kept to the end
+    print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')}: the terminal is gone; the session's output continues here")
+
+
+def _stop(signum: int, frame: Any) -> None:
+    """SIGTERM: end the session the way Ctrl+C does."""
+    raise KeyboardInterrupt
+
+
+def _hang_up(signum: int, frame: Any) -> None:
+    """SIGHUP, a lost SSH connection: end the session the way Ctrl+C does, writing the rest to LOG_PATH."""
+    _log_to_file()
+    print("the SSH connection was lost: ending the session safely")
+    raise KeyboardInterrupt
 
 
 def _state_names(station: config.StationConfig) -> list[str]:
@@ -302,6 +479,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true", help="read the arms and the Quest; command nothing")
     parser.add_argument("--sim", action="store_true", help="YAM: i2rt's simulated arms and blank camera frames")
     parser.add_argument("--quest-ip", help="the Quest's address for adb over Wi-Fi (default: USB)")
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=dashboard.DEFAULT_PORT,
+        help=f"the browser dashboard's port on the station (0: none; default {dashboard.DEFAULT_PORT})",
+    )
     args = parser.parse_args(argv)
     try:
         station = config.load(args.config)
@@ -309,7 +492,17 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(f"config: {error}")
     if args.dataset_dir:
         station = dataclasses.replace(station, dataset_dir=pathlib.Path(args.dataset_dir).expanduser())
-    run(station, args.task or station.task, dry_run=args.dry_run, sim=args.sim, quest_ip=args.quest_ip)
+    try:
+        run(
+            station,
+            args.task or station.task,
+            dry_run=args.dry_run,
+            sim=args.sim,
+            quest_ip=args.quest_ip,
+            dashboard_port=args.dashboard_port,
+        )
+    except station_lock.StationBusyError as error:
+        sys.exit(str(error))
 
 
 if __name__ == "__main__":

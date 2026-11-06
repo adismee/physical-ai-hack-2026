@@ -31,7 +31,7 @@ If you collect more episodes afterwards, run it again with `--replace` to rebuil
 - The first run on an account registers the robot's embodiment, the description of what each recorded value means, as `hackathon-yam`, `hackathon-metal` or `hackathon-maker`, and later runs reuse it.
 - `--lr-schedule cosine` tends to suit a model trained on a single task; `--learning-rate` takes 1e-6 to 1e-4 (the default is 1e-5).
 
-The command checks the dataset on your computer first, then uploads it, waits for the platform to process it, queues the job and waits for your model, printing the status as it goes. It ends with your model's id and the command to try it.
+The command checks the dataset on your computer first, then uploads it, waits for the platform to process it, queues the job and waits for your model, printing the status as it goes. It ends with your model's id and the command to try it. The wait lasts hours, so run it inside tmux on the station (`tmux new -A -s finetune`). The job trains on the platform whatever happens to your terminal.
 
 You can stop it with Ctrl+C at any point once the upload is done. Pick up again with the id it printed:
 

@@ -9,7 +9,7 @@ Claude Code can walk you through these steps: see "For organizers" in the README
 You need Ubuntu 22.04 or 24.04 on an x86-64 computer, with one USB port per camera (USB 3 for RealSense cameras) and one per arm adapter.
 
 ```bash
-sudo apt install git git-lfs adb
+sudo apt install git git-lfs adb tmux
 git lfs install                                  # the Quest app is stored with git LFS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # uv installs Python 3.12 and every dependency
 git clone https://github.com/dreamlabs-co/dream-hackathon-kit.git
@@ -93,7 +93,7 @@ Use `type: uvc` with a `device` for a webcam, or `type: realsense` with a `seria
 uv run python scripts/check_cameras.py --config configs/station.yaml
 ```
 
-Move each camera until its view is what you want; then do not move it again for the rest of the hackathon. The model learns from these exact views.
+With no screen on the station, this serves the three views to a browser: on your laptop, connect with `ssh -L 8080:localhost:8080 <user>@<station>` and open http://localhost:8080. Move each camera until its view is what you want; then do not move it again for the rest of the hackathon. The model learns from these exact views.
 
 ## 4. The Quest
 
@@ -122,6 +122,10 @@ Then set each arm's `workspace_min_m` and `workspace_max_m`, the box the tool is
 
 Fine-tuning and running models use the Dream library in its own environment, `~/dream-env`. Install it with the two steps on the [Getting started page](https://platform.dreamlabs.ai/api-documentation/), which also save the API key the participants' jobs run under. Then run `dreamcli setup` for the arm type you have: participants' models run from the config it writes. On Metal and Maker arms it also measures the gripper angles step 2 needs.
 
-## 7. Before handing the station over
+## 7. Access for participants
+
+Participants work on the station over SSH, with no screen. Give every team the station's one account rather than an account each: the Dream library, its API key and `dreamcli`'s config live in that account's home, and the station's lock, which lets only one program drive the arms at a time, is per account (`~/.dreamlabs/arms.lock`, the same file `dreamcli` locks). Each team names its own dataset folder with `--dataset-dir`. Port 8080 on the station's loopback address must be free for the dashboard (`--dashboard-port` picks another).
+
+## 8. Before handing the station over
 
 Record two short episodes into a throwaway folder (`--dataset-dir ~/hackathon_data/station-test`) and check them with `~/dream-env/bin/python tools/finetune.py ~/hackathon_data/station-test --arm <arm> --check`. On a Metal or Maker arm, run `tools/add_eef.py` first and check the `-eef` folder. A station whose test passes is ready for participants.

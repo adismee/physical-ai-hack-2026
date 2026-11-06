@@ -16,6 +16,7 @@ scratch folder outside the dataset, so a crash never leaves a half-written file 
 @see DatasetWriter, Episode
 """
 
+import dataclasses
 import json
 import os
 import pathlib
@@ -300,6 +301,111 @@ class _VideoEncoder:
             self._container.close()
 
 
+@dataclasses.dataclass(frozen=True)
+class EpisodeInfo:
+    """One saved episode, as `meta/episodes.jsonl` lists it.
+
+    Attributes:
+    - index: The episode's index.
+    - frames: Its length in frames.
+    - tasks: Its task texts.
+    """
+
+    index: int
+    frames: int
+    tasks: tuple[str, ...]
+
+
+def list_episodes(root: pathlib.Path) -> list[EpisodeInfo]:
+    """The dataset's episodes, in order; empty when the folder holds no dataset yet."""
+    path = root / "meta" / "episodes.jsonl"
+    if not path.exists():
+        return []
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [EpisodeInfo(int(row["episode_index"]), int(row["length"]), tuple(row["tasks"])) for row in rows]
+
+
+def video_keys_of(root: pathlib.Path) -> list[str]:
+    """The camera video keys a dataset records, from its `meta/info.json`."""
+    info = json.loads((root / "meta" / "info.json").read_text())
+    return sorted(key for key, feature in info["features"].items() if feature.get("dtype") == "video")
+
+
+def drop_episodes(root: pathlib.Path, drop: set[int]) -> int:
+    """Deletes episodes from a dataset and renumbers the ones after them, as Dream requires (0, 1, 2, ...).
+
+    Each later episode's parquet is rewritten with its new `episode_index` and the dataset-wide frame `index`, and
+    its videos are renamed; `meta/` is rewritten to match. Do not run it while a collector records into the folder.
+
+    @param root The dataset folder.
+    @param drop The indices of the episodes to delete.
+    @return How many episodes are left.
+    @throws DatasetError An index is not one of the dataset's episodes.
+    """
+    episodes = list_episodes(root)
+    unknown = sorted(drop - {episode.index for episode in episodes})
+    if unknown:
+        raise DatasetError(f"{root} has no episode {unknown[0]} (it has 0 to {len(episodes) - 1})")
+    keys = video_keys_of(root)
+    meta = root / "meta"
+    stats_rows = [json.loads(line) for line in (meta / "episodes_stats.jsonl").read_text().splitlines() if line]
+    stats_by_episode = {int(row["episode_index"]): row["stats"] for row in stats_rows}
+
+    def data_path(index: int) -> pathlib.Path:
+        return root / DATA_PATH.format(episode_chunk=index // CHUNKS_SIZE, episode_index=index)
+
+    def video_path(index: int, key: str) -> pathlib.Path:
+        return root / VIDEO_PATH.format(episode_chunk=index // CHUNKS_SIZE, video_key=key, episode_index=index)
+
+    for index in sorted(drop):
+        data_path(index).unlink()
+        for key in keys:
+            video_path(index, key).unlink()
+    kept: list[EpisodeInfo] = []
+    kept_stats: list[dict[str, Any]] = []
+    first_frame = 0
+    for episode in episodes:
+        if episode.index in drop:
+            continue
+        new = len(kept)
+        # New indices only ever move down, onto a file already deleted or already moved, so nothing is overwritten.
+        table = pq.read_table(data_path(episode.index))
+        frames = np.arange(first_frame, first_frame + table.num_rows, dtype=np.int64)
+        table = table.set_column(
+            table.schema.get_field_index("episode_index"),
+            "episode_index",
+            pa.array(np.full(table.num_rows, new, dtype=np.int64)),
+        )
+        table = table.set_column(table.schema.get_field_index("index"), "index", pa.array(frames))
+        target = data_path(new)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, target)
+        if new != episode.index:
+            data_path(episode.index).unlink()
+            for key in keys:
+                video_path(new, key).parent.mkdir(parents=True, exist_ok=True)
+                os.replace(video_path(episode.index, key), video_path(new, key))
+        stats = dict(stats_by_episode[episode.index])
+        stats["episode_index"] = _scalar_stats(np.full(table.num_rows, new))
+        stats["index"] = _scalar_stats(frames)
+        kept.append(EpisodeInfo(new, episode.frames, episode.tasks))
+        kept_stats.append({"episode_index": new, "stats": stats})
+        first_frame += table.num_rows
+
+    _write_lines(
+        meta / "episodes.jsonl", [{"episode_index": e.index, "tasks": list(e.tasks), "length": e.frames} for e in kept]
+    )
+    _write_lines(meta / "episodes_stats.jsonl", kept_stats)
+    info = json.loads((meta / "info.json").read_text())
+    info["total_episodes"] = len(kept)
+    info["total_frames"] = first_frame
+    info["total_videos"] = len(kept) * len(keys)
+    info["total_chunks"] = (len(kept) - 1) // CHUNKS_SIZE + 1 if kept else 0
+    info["splits"] = {"train": f"0:{len(kept)}"}
+    _write_json(meta / "info.json", info)
+    return len(kept)
+
+
 def _features(
     state_names: list[str],
     video_keys: list[str],
@@ -391,6 +497,13 @@ def _write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_suffix(".json.partial")
     partial.write_text(json.dumps(value, indent=2) + "\n")
+    os.replace(partial, path)
+
+
+def _write_lines(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
+    """Rewrites a JSON-lines file through a temporary file."""
+    partial = path.with_suffix(".jsonl.partial")
+    partial.write_text("".join(json.dumps(row) + "\n" for row in rows))
     os.replace(partial, path)
 
 

@@ -1,13 +1,16 @@
 """The collector loop over fake arms and a fake Quest: teleop, recording, dry run, homing and the lag guard."""
 
 import dataclasses
+import json
 import pathlib
+import sys
 
 import dream
 import numpy as np
+import pytest
 from conftest import FLANGE, JOINT_NAMES, arm_urdf
 
-from dream_hackathon import collect, config, dataset, ik, layouts, quest
+from dream_hackathon import cameras, collect, config, dataset, ik, layouts, quest
 
 CONFIGS = pathlib.Path(__file__).resolve().parents[1] / "configs"
 START = np.array([0.0, -0.3, 1.2, 0.6, 0.0, 0.0])  # elbow bent: 5 cm forward is in reach
@@ -156,3 +159,55 @@ def test_a_dry_run_follows_the_real_arm_until_engaged(tmp_path: pathlib.Path) ->
     dry.joints["left"] = START  # moved again, but the clutch now drives the (virtual) command
     collector.tick()
     np.testing.assert_allclose(collector._command.joints["left"], START + 0.2, atol=1e-3)
+
+
+def test_snapshot_reports_the_session(tmp_path: pathlib.Path) -> None:
+    arms_, headset = FakeArms(), FakeQuest()
+    collector = _collector(tmp_path, arms_, headset, [])
+    headset.press.add("A")
+    collector.tick()
+    snapshot = collector.snapshot()
+    assert snapshot["mode"] == "live" and snapshot["recording"] and snapshot["episodes"] == 0
+    assert set(snapshot["arms"]) == {"left", "right"} and len(snapshot["arms"]["left"]["tool_m"]) == 3
+    json.dumps(snapshot)  # the dashboard sends it as JSON
+    assert collect._status_line(snapshot).startswith("REC")
+
+
+def test_a_stalled_camera_discards_the_episode_and_teleop_goes_on(tmp_path: pathlib.Path) -> None:
+    arms_, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms_, headset, logs)
+
+    def stalled():
+        raise cameras.CameraError("camera 'wrist_l' stalled")
+
+    collector._frames = stalled
+    headset.press.add("A")
+    collector.tick()
+    assert collector.episode is None
+    assert any("stalled" in line for line in logs)
+    assert any("stalled" in warning for warning in collector.snapshot()["warnings"])
+    collector.tick()  # the loop keeps running
+
+
+def test_a_hang_up_ends_the_session_like_ctrl_c_and_logs_to_a_file(tmp_path: pathlib.Path, monkeypatch) -> None:
+    monkeypatch.setattr(collect, "LOG_PATH", tmp_path / "collect.log")
+    stdout, stderr = sys.stdout, sys.stderr
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            collect._hang_up(1, None)
+        collect._say("returning the arms")
+    finally:
+        sys.stdout.close()
+        sys.stdout, sys.stderr = stdout, stderr
+    text = (tmp_path / "collect.log").read_text()
+    assert "SSH connection was lost" in text and "returning the arms" in text
+
+
+def test_homing_gives_up_after_its_timeout(tmp_path: pathlib.Path) -> None:
+    arms_, headset, logs = FakeArms(), FakeQuest(), []
+    collector = _collector(tmp_path, arms_, headset, logs)
+    arms_.stuck = True
+    collector._command.joints["left"] = START + 0.1
+    arms_.joints["left"] = START + 0.1
+    collector.go_home(timeout_s=0.05)
+    assert not collector.homing and any("did not reach their start" in line for line in logs)

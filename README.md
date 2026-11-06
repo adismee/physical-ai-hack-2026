@@ -16,15 +16,19 @@ Every station has one overhead camera and one camera on each wrist (USB webcams 
 
 ## For participants
 
-Your station is ready: the arms, cameras, Quest and the Dream library are set up, and its config is `configs/station.yaml`. You do two things:
+Your station is ready: the arms, cameras, Quest and the Dream library are set up, and its config is `configs/station.yaml`. The station has no screen: you work on it over SSH from your laptop, and watch it in your laptop's browser. You do two things:
 
 1. **Collect demonstrations** ([docs/data_collection.md](docs/data_collection.md)). Hold a controller's grip to drive that arm and pull its trigger to close its gripper. Press A to start and stop recording an episode, and B to throw one away.
 
    ```bash
+   ssh -L 8080:localhost:8080 <user>@<station>     # then open http://localhost:8080 on your laptop: the dashboard
+   tmux new -A -s collect                          # keeps the session running if your connection drops
    cd ~/dream-hackathon-kit
    uv run dhk-collect --config configs/station.yaml --dry-run      # practice: the arms do not move
    uv run dhk-collect --config configs/station.yaml --task "put the red cube in the bowl" --dataset-dir ~/hackathon_data/myteam-cubes
    ```
+
+   The dashboard shows the three cameras as they are recorded, whether you are recording, both arms and the episodes you saved, which you can play back. `uv run dhk-dataset drop <folder> <episode>` removes one you do not want.
 
 2. **Fine-tune Dream-1 on them** ([docs/fine_tuning.md](docs/fine_tuning.md)). Use `--arm yam`, `metal` or `maker`, whichever your station has:
 
@@ -64,6 +68,8 @@ No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --si
 | `src/dream_hackathon/arms/` | The YAM and MakerMods arm adapters over the vendors' SDKs |
 | `src/dream_hackathon/quest.py`, `teleop.py`, `ik.py` | Quest input, the clutched hand-to-tool mapping, and the teleop IK |
 | `src/dream_hackathon/cameras.py`, `dataset.py` | Camera capture and the LeRobot v2.1 writer |
+| `src/dream_hackathon/dashboard.py`, `dataset_cli.py` | The browser dashboard (over SSH) and `dhk-dataset` (list and drop episodes) |
+| `src/dream_hackathon/station_lock.py` | One program drives the arms at a time (shared with `dreamcli`) |
 | `src/dream_hackathon/embodiments/` | The Dream embodiment configs your fine-tunes are registered with |
 | `configs/` | One template station config per arm type; a station's own is `configs/station.yaml` (not committed) |
 | `tools/` | Dream API steps, run in the Dream library's environment: `add_eef.py`, `finetune.py` |

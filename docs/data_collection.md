@@ -16,6 +16,28 @@ Your station is already set up; this is where you start. You teach the model by 
 
 The arm follows how your hand moves after you grip, not where your hand is. If you run out of reach, release, move your hand back, and grip again, like lifting a mouse off the table. The app reports each controller relative to the headset, so keep your head still and facing the arms while you grip.
 
+## Working on a station over SSH
+
+The station has no screen. Connect from your laptop with the dashboard's port forwarded, and start a tmux session, so that a dropped Wi-Fi connection does not end your session:
+
+```bash
+ssh -L 8080:localhost:8080 <user>@<station>
+tmux new -A -s collect          # after a drop, reconnect and run the same line to get back to it
+cd ~/dream-hackathon-kit
+```
+
+Then open http://localhost:8080 in your laptop's browser. The dashboard shows:
+
+- The three cameras, cropped and sized as they are recorded.
+- Whether an episode is recording, and for how long.
+- Each arm: driving or holding, its tool position and its gripper.
+- Warnings (a stalled camera, an arm that cannot follow) and the session's events.
+- The episodes saved so far, with each camera's video to play back.
+
+Tick "sound cues" and the laptop beeps when recording starts (one beep), when an episode is saved (two) or discarded (a low one). That lets a teammate at the laptop follow the operator. The page only watches: nothing on it moves the arms or changes your data.
+
+If the connection drops outside tmux, the session ends safely: the episode being recorded is discarded, the arms return to where they started and are released, and the rest of the output goes to `~/.cache/dream_hackathon/collect.log`. Only one program can drive the arms at a time. If someone else is using the station, `dhk-collect` says who, from where and since when.
+
 ## A recording session
 
 1. Start with the arms resting in their start pose: on a MakerMods station, supported or folded, since they go limp there at the end.
@@ -44,6 +66,17 @@ Each saved episode is printed with its number. To check the dataset at any point
 # Metal or Maker arm: add_eef checks the dataset it writes; --replace rebuilds it after you collect more
 ~/dream-env/bin/python tools/add_eef.py ~/hackathon_data/myteam-cubes --arm metal --replace
 ```
+
+## Removing episodes
+
+B throws away the episode you are recording. To remove one you notice later, after watching it on the dashboard, list the episodes and drop it:
+
+```bash
+uv run dhk-dataset list ~/hackathon_data/myteam-cubes
+uv run dhk-dataset drop ~/hackathon_data/myteam-cubes 3        # asks first; several numbers drop several
+```
+
+The episodes after it are renumbered, so check `list` again before dropping another. On a Metal or Maker arm, rebuild the dataset you fine-tune on afterwards with `tools/add_eef.py ... --replace`. Stop `dhk-collect` before dropping episodes from the folder it records into.
 
 ## What the dataset holds
 
