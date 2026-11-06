@@ -39,6 +39,12 @@ home_paths=(
   "$HOME/.local/bin/env.fish"
   "$HOME/.android"
   "$HOME/.git-credentials"
+  "$HOME/robots-inference.jsonl"  # the Dream library's station agent writes its log here
+  "$HOME/.rum"                    # the RealSense library's usage statistics
+  "$HOME/.dream"                  # the Dream library's logs
+  "$HOME/.cache/pip"              # what pip downloaded for the Dream library
+  "$HOME/.config/uv"              # uv's installer receipt
+  "$HOME/.config/fish/conf.d/uv.env.fish"  # uv's PATH line for the fish shell
 )
 system_files=(/etc/udev/rules.d/90-dreamlabs-can.rules /etc/udev/rules.d/90-can.rules /etc/udev/rules.d/90-quest-adb.rules)
 apt_packages=(build-essential python3-dev curl adb tmux git-lfs python3-pip)
@@ -72,6 +78,11 @@ if command -v git >/dev/null && git config --global --get filter.lfs.process >/d
   has_lfs=1
   echo "  (git)	git-lfs's settings in ~/.gitconfig"
 fi
+empty_gitconfig=0
+if [ -f "$HOME/.gitconfig" ] && [ ! -s "$HOME/.gitconfig" ]; then
+  empty_gitconfig=1
+  echo "  (git)	the empty ~/.gitconfig git-lfs left"
+fi
 has_quest_app=0
 if command -v adb >/dev/null && adb devices 2>/dev/null | grep -q 'device$'; then
   has_quest_app=1
@@ -92,7 +103,7 @@ if [ "$with_apt" = 1 ]; then
   [ "${#apt_found[@]}" -gt 0 ] && echo "  (apt)	${apt_found[*]}"
 fi
 if [ "${#found[@]}" -eq 0 ] && [ "${#system_found[@]}" -eq 0 ] && [ "${#profile_found[@]}" -eq 0 ] \
-  && [ "$has_lfs" = 0 ] && [ "$has_quest_app" = 0 ] && [ "$in_video" = 0 ] && [ "${#apt_found[@]}" -eq 0 ]; then
+  && [ "$has_lfs" = 0 ] && [ "$empty_gitconfig" = 0 ] && [ "$has_quest_app" = 0 ] && [ "$in_video" = 0 ] && [ "${#apt_found[@]}" -eq 0 ]; then
   echo "  nothing: this computer has no station setup left"
   exit 0
 fi
@@ -112,10 +123,19 @@ done
 for profile in "${profile_found[@]}"; do
   sed -i "\\|^\\. \"\\\$HOME/\\.local/bin/env\"\$|d" "$profile" && echo "removed uv's PATH line from $profile"
 done
+for profile in "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.bash_profile"; do  # Ubuntu makes none of these; uv's installer can
+  if [ -f "$profile" ] && ! grep -q '[^[:space:]]' "$profile"; then
+    rm -f "$profile" && echo "removed $profile, which held only uv's line"
+  fi
+done
 if [ "$has_lfs" = 1 ]; then
   git lfs uninstall >/dev/null 2>&1 || git config --global --remove-section filter.lfs 2>/dev/null
   echo "removed git-lfs's settings from ~/.gitconfig"
 fi
+if [ -f "$HOME/.gitconfig" ] && [ ! -s "$HOME/.gitconfig" ]; then
+  rm -f "$HOME/.gitconfig" && echo "removed the empty ~/.gitconfig"
+fi
+rmdir "$HOME/.config/fish/conf.d" "$HOME/.config/fish" 2>/dev/null || true  # only when uv's line was all they held
 if [ "$in_video" = 1 ]; then
   sudo gpasswd -d "$USER" video >/dev/null && echo "removed $USER from the video group"
 fi
