@@ -132,10 +132,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    import os
+
     from dream_hackathon import config as cfg
     from dream_hackathon.arms import open_arms
 
     station = cfg.load(args.config)
+
+    # Must NOT go through the proxy even if DREAM_ARM_PROXY is set — we are the proxy.
+    os.environ.pop("DREAM_ARM_PROXY", None)
 
     print(f"Opening arms (energize={args.energize}) ...")
     _arms = open_arms(station, energize=args.energize)
