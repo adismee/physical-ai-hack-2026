@@ -63,12 +63,14 @@ def _degs_to_joints_grip(degs: dict[str, float], arm_cfg) -> tuple[np.ndarray, f
 
 
 def _gripper_deg(arm_cfg, grip: float) -> float:
-    return arm_cfg.gripper_closed_deg + min(1.0, max(0.0, grip)) * (arm_cfg.gripper_open_deg - arm_cfg.gripper_closed_deg)
+    # Allow grip slightly below 0 so the follower can push past the calibrated closed position.
+    return arm_cfg.gripper_closed_deg + min(1.0, max(-1.0, grip)) * (arm_cfg.gripper_open_deg - arm_cfg.gripper_closed_deg)
 
 
-def _command_follower(device, arm_cfg, joints_rad: np.ndarray, grip: float) -> None:
+def _command_follower(device, arm_cfg, joints_rad: np.ndarray, grip: float, grip_extra: float = 0.0) -> None:
     action = {f"{m}.pos": math.degrees(v) for m, v in zip(MOTORS, joints_rad)}
-    action[f"{GRIPPER}.pos"] = _gripper_deg(arm_cfg, grip)
+    # grip_extra shifts the follower gripper more closed than the leader (closes the gap at the hard stop).
+    action[f"{GRIPPER}.pos"] = _gripper_deg(arm_cfg, grip - grip_extra)
     device.send_action(action)
 
 
@@ -100,6 +102,14 @@ def main() -> None:
     parser.add_argument(
         "--gravity", action="store_true",
         help="Gravity compensation / weightless mode on the leader arm (Metal arms only; requires pinocchio).",
+    )
+    parser.add_argument(
+        "--gravity-kd", type=float, default=0.0, metavar="KD",
+        help="Velocity damping on the leader arm in gravity mode (default 0 = no resistance when moving).",
+    )
+    parser.add_argument(
+        "--grip-extra", type=float, default=0.15, metavar="EXTRA",
+        help="How much extra the follower gripper closes past the leader's calibrated zero (default 0.15).",
     )
     args = parser.parse_args()
 
@@ -145,9 +155,16 @@ def main() -> None:
             try:
                 from lerobot.teleoperators.metal_leader import MetalLeader, MetalLeaderConfig
                 print(f"Opening {args.leader} arm (gravity compensation — weightless mode) ...")
+                kd_kwargs: dict = {}
+                try:
+                    # Reduce velocity damping so the arm moves freely; not all versions expose kd.
+                    MetalLeaderConfig(port=leader_cfg.port, id="_probe", can_interface=mm.can_interface, kd=0.0)
+                    kd_kwargs = {"kd": args.gravity_kd}
+                except TypeError:
+                    pass
                 leader_dev = MetalLeader(MetalLeaderConfig(
                     port=leader_cfg.port, id="mirror_leader", can_interface=mm.can_interface,
-                    hold_kp_on_disconnect=0.0,
+                    hold_kp_on_disconnect=0.0, **kd_kwargs,
                 ))
                 leader_dev.connect()
                 leader_gravity = True
@@ -233,7 +250,7 @@ def main() -> None:
 
             # Command follower to track leader
             try:
-                _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip)
+                _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
             except Exception as e:
                 print(f"command error: {e}")
 
