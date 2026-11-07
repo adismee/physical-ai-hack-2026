@@ -112,7 +112,7 @@ This only reads the arms. YAM arms float in gravity compensation; MakerMods arms
 uv run python scripts/check_cameras.py --list
 ```
 
-This lists the USB cameras by their stable `/dev/v4l/by-id/...` names and the RealSense cameras by serial number. In your config, give each role its camera:
+This lists the USB cameras by their stable `/dev/v4l/by-id/...` names (model and serial) and their `/dev/v4l/by-path/...` names (the USB port), and the RealSense cameras by serial number. Identical webcams with no serial share one `by-id` name, so only one of them shows there: use their `by-path` names instead, as the setup wizard does (`~/.dreamlabs/station.yaml` has them), quote them in the config (they contain colons), and keep each camera in its USB port from then on. In your config, give each role its camera (the wizard's `scene` camera is the kit's `overhead`):
 
 - `overhead`: a fixed camera that sees the whole workspace.
 - `wrist_l` and `wrist_r`: the left and right wrist cameras.
