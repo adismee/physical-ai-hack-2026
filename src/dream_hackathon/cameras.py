@@ -21,6 +21,10 @@ from dream_hackathon import config
 STALL_AFTER_S = 0.5
 ## A camera that keeps failing (unplugged, its stream gone) is reopened this often, until it is back.
 REOPEN_EVERY_S = 1.0
+## The frame buffers a webcam is given. With one, the camera drops every frame it finishes while that buffer is still
+## with the reader: webcams that deliver 30 fps with two gave 15 to 20 with one. Two keep the frame read at most one
+## frame old, since the reader takes each frame as it comes.
+UVC_BUFFERS = 2
 
 
 class CameraError(RuntimeError):
@@ -184,7 +188,7 @@ class _UvcReader:
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
         self._capture.set(cv2.CAP_PROP_FPS, cfg.fps)
-        self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._capture.set(cv2.CAP_PROP_BUFFERSIZE, UVC_BUFFERS)
 
     def __call__(self) -> npt.NDArray[np.uint8] | None:
         ok, frame = self._capture.read()
