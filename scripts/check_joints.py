@@ -8,7 +8,6 @@ so you can tell which arm has the bad motor.
 """
 
 import argparse
-import math
 import time
 
 MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper")
@@ -25,10 +24,9 @@ def read_arm(bus, side: str, prev: dict[str, float | None]) -> dict[str, float |
             if prev_val is not None and abs(val - prev_val) > MOVE_THRESHOLD_DEG:
                 print(f"  {side:5s}  {motor:15s}  {val:+8.2f} deg  (Δ {val - prev_val:+.2f})")
         except Exception as e:
-            current[motor] = None
             if prev.get(motor) != "error":
                 print(f"  {side:5s}  {motor:15s}  ERROR: {e}")
-                current[motor] = "error"  # type: ignore[assignment]
+            current[motor] = "error"  # type: ignore[assignment]
     return current
 
 
