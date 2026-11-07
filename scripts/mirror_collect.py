@@ -9,12 +9,19 @@ Usage (THE RIGHT ARM WILL MOVE — support it before starting):
         --dataset ~/hackathon_data/my-task \\
         --task "pick up the red cube"
 
+    # Gravity compensation / weightless mode (Metal arms only, requires pinocchio):
+    uv run python scripts/mirror_collect.py \\
+        --config configs/station.yaml \\
+        --dataset ~/hackathon_data/my-task \\
+        --task "pick up the red cube" \\
+        --gravity
+
 Controls (type then Enter):
     Enter   Start a new episode (idle) / save the current episode (recording)
     d       Discard the current episode
     q       Quit (saves active episode if one is running)
 
-The left arm is opened torque-off — move it freely by hand.
+The left arm is opened torque-off (or gravity-compensated with --gravity) — move it freely.
 The right arm is opened energized and tracks the left arm in real time.
 """
 
@@ -34,7 +41,11 @@ GRIPPER = "gripper"
 
 # ------------------------------------------------------------------ arm helpers
 
-def _read_leader_degs(device) -> dict[str, float]:
+def _read_leader_degs(device, gravity: bool) -> dict[str, float]:
+    if gravity:
+        # MetalLeader: get_action() returns the current joint positions as the teleop command.
+        action = device.get_action()
+        return {m: float(action[f"{m}.pos"]) for m in (*MOTORS, GRIPPER)}
     return {m: float(device.bus.read("Present_Position", m)) for m in (*MOTORS, GRIPPER)}
 
 
@@ -86,6 +97,10 @@ def main() -> None:
     parser.add_argument("--task", default="", help="Task description recorded with every episode")
     parser.add_argument("--leader", default="left", choices=["left", "right"], help="Which arm to move by hand")
     parser.add_argument("--follower", default="right", choices=["left", "right"], help="Which arm tracks the leader")
+    parser.add_argument(
+        "--gravity", action="store_true",
+        help="Gravity compensation / weightless mode on the leader arm (Metal arms only; requires pinocchio).",
+    )
     args = parser.parse_args()
 
     if args.leader == args.follower:
@@ -120,15 +135,34 @@ def main() -> None:
     vk = layouts.video_keys(station.family)
     video_key_map = {"overhead": vk["overhead"], "wrist_l": vk["wrist_l"], "wrist_r": vk["wrist_r"]}
 
-    # ---- open leader arm (torque off — move freely by hand)
-    print(f"Opening {args.leader} arm (torque off — leader) ...")
+    # ---- open leader arm (torque off or gravity-compensated)
     leader_cfg = station.arms[args.leader]
-    leader_dev = Follower(FollowerConfig(
-        port=leader_cfg.port, id=f"mirror_leader", can_interface=mm.can_interface
-    ))
-    leader_dev.bus.connect(handshake=False)
-    leader_dev.bus.disable_torque()
-    print(f"  {args.leader}: connected (torque off — move it by hand)")
+    leader_gravity = False
+    if args.gravity:
+        if station.arm != "metal":
+            print("--gravity is only supported for Metal arms; falling back to torque-off.")
+        else:
+            try:
+                from lerobot.teleoperators.metal_leader import MetalLeader, MetalLeaderConfig
+                print(f"Opening {args.leader} arm (gravity compensation — weightless mode) ...")
+                leader_dev = MetalLeader(MetalLeaderConfig(
+                    port=leader_cfg.port, id="mirror_leader", can_interface=mm.can_interface,
+                    hold_kp_on_disconnect=0.0,
+                ))
+                leader_dev.connect()
+                leader_gravity = True
+                print(f"  {args.leader}: gravity compensation active — arm is weightless")
+            except Exception as e:
+                print(f"--gravity failed ({e}); falling back to torque-off.")
+
+    if not leader_gravity:
+        print(f"Opening {args.leader} arm (torque off — leader) ...")
+        leader_dev = Follower(FollowerConfig(
+            port=leader_cfg.port, id="mirror_leader", can_interface=mm.can_interface
+        ))
+        leader_dev.bus.connect(handshake=False)
+        leader_dev.bus.disable_torque()
+        print(f"  {args.leader}: connected (torque off — move it by hand)")
 
     # ---- open follower arm (energized — THE ARM WILL MOVE)
     print(f"Opening {args.follower} arm (energized — follower, THE ARM WILL MOVE) ...")
@@ -182,7 +216,7 @@ def main() -> None:
 
             # Read arms
             try:
-                leader_degs = _read_leader_degs(leader_dev)
+                leader_degs = _read_leader_degs(leader_dev, leader_gravity)
                 leader_joints, leader_grip = _degs_to_joints_grip(leader_degs, leader_cfg)
             except Exception as e:
                 print(f"leader read error: {e}")
@@ -268,7 +302,15 @@ def main() -> None:
         for problem in FAMILY.release_torque(follower_dev, f"{args.follower} follower"):
             print(f"  warning: {problem}")
         follower_dev.disconnect()
-        leader_dev.bus.disconnect(False)
+        if leader_gravity:
+            try:
+                from makermodslab.maker_rest_pose import stop_gravity_compensation
+                stop_gravity_compensation(leader_dev)
+            except Exception:
+                pass
+            leader_dev.disconnect()
+        else:
+            leader_dev.bus.disconnect(False)
         print("Done.")
 
 
