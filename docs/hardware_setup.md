@@ -10,7 +10,7 @@ You need Ubuntu 26.04 LTS on an x86-64 computer (the version the stations run an
 
 ```bash
 sudo apt install git git-lfs adb tmux curl build-essential python3-dev linux-headers-$(uname -r)
-sudo usermod -aG video,plugdev $USER             # lets SSH sessions open the cameras (from your next login)
+sudo usermod -aG video,dialout,plugdev $USER     # lets SSH sessions open the cameras and arm adapters (from your next login)
 echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2833", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/90-quest-adb.rules
 sudo udevadm control --reload-rules              # the rule above lets SSH sessions use the Quest over adb
 sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2833   # and applies it to a headset already plugged in
@@ -21,7 +21,7 @@ git clone https://github.com/dreamlabs-co/physical-ai-hack-2026.git ~/physical-a
 cd ~/physical-ai-hacks
 ```
 
-Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Log out and back in once (over SSH, reconnect) so the `video` group applies: without it, nothing started over SSH can open a camera, because Ubuntu gives the cameras only to whoever is logged in at the station's own screen. The Quest's udev rule does the same for the headset, through the `plugdev` group. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
+Already cloned? `cd ~/physical-ai-hacks && git pull` brings it up to date instead. If `uv` is "not found", run the `source` line above; if `~/.local/bin/uv` does not exist, the installer did not run (check that `curl` is installed). Never use the snap the message suggests. Log out and back in once (over SSH, reconnect) so the groups apply; a terminal opened before then, and anything started from it (`dreamcli setup` included), still lacks them, so check with `id -nG`. Without `video`, nothing started over SSH can open a camera, because Ubuntu gives the cameras only to whoever is logged in at the station's own screen. Without `dialout`, nothing can open a Metal or Maker arm's USB adapter (`/dev/ttyACM*`); `dreamcli setup` then says "This user may not open the adapter". The Quest's udev rule does the same for the headset, through the `plugdev` group. Ubuntu 26.04's own Python is 3.14, newer than the MakerMods stack supports, so the kit runs on the Python 3.13 that uv downloads: leave the system Python alone.
 
 Install the dependencies for your arm type. A station installs one arm type, never both:
 
