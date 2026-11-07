@@ -11,7 +11,6 @@ arms can be read before the IK is set up.
 @see Arms, open_arms(), open_ik()
 """
 
-import os
 from typing import Protocol
 
 import numpy as np
@@ -56,20 +55,11 @@ class Arms(Protocol):
 def open_arms(station: config.StationConfig, *, energize: bool, sim: bool = False) -> Arms:
     """Opens both arms of a station.
 
-    If DREAM_ARM_PROXY is set (e.g. ``http://localhost:8082``) the call connects to a
-    running arm_proxy daemon instead of opening CAN buses directly.  This lets multiple
-    processes share the same arms without conflict.
-
     @param station The station config.
     @param energize True to drive the arms; False for a dry run that only reads them.
     @param sim YAM only: i2rt's MuJoCo simulation instead of the real arms.
     @return The arms.
     """
-    proxy_url = os.environ.get("DREAM_ARM_PROXY")
-    if proxy_url:
-        from dream_hackathon.arms.proxy import ProxyArms
-
-        return ProxyArms(proxy_url)
     if station.family == "yam":
         from dream_hackathon.arms import yam
 
