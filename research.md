@@ -179,6 +179,30 @@ Unknown/stealth — no public robotics presence found. Had an early 9:40 AM slot
 
 ---
 
+## Data Collection Tips
+
+### Controls (Quest)
+
+| Control | Does |
+|---|---|
+| Grip (middle finger), held | Drives that arm — gripper follows your hand |
+| Grip released | Arm holds position; re-grip to continue (like lifting a mouse) |
+| Index trigger | Gripper: released = open, pulled = closed |
+| A | Start/stop recording an episode; first press of session opens the arms |
+| B | Discard the episode being recorded |
+| Right joystick click | Returns both arms to start pose (not while recording) |
+| Ctrl+C | Ends session; active episode is discarded, arms return to start |
+
+**Critical:** The app tracks controllers *relative to the headset*. Turning your head while gripping moves the arm. Keep your head still and facing the arms while driving.
+
+### Dashboard Tips
+
+- **Sound cues:** tick "sound cues" — 1 beep = recording started, 2 beeps = saved, low beep = discarded. Lets a laptop teammate follow the operator without watching the screen.
+- The dashboard shows each device's status and what to do if one is red. Fix buttons: "Bring ... up" (CAN link down), "Restart the Quest app" (controllers stopped), "Restart adb" (headset unauthorized).
+- Nothing on the dashboard page moves the arms.
+
+---
+
 ## Dream-1 Fine-Tuning Deep Dive
 
 ### Data Format: LeRobot v2.1
@@ -252,6 +276,21 @@ Pipeline: validate → register embodiment (once per account) → upload → wai
 - **Move smoothly:** jerky demos → jerky policy.
 - **Task text matters:** use the same phrasing at inference as during collection (or the auto-label Dream applies). Phrasing variation drops success rate.
 
+### Multi-Session / Multi-Task Training
+
+Every session added to the same `--dataset-dir` becomes one dataset. To train on two separate folders together (e.g. two different tasks or two collection sessions in different folders), put both inside a parent folder and pass the parent to `finetune.py` — the platform reads each subfolder as one session. For Metal/Maker arms, run `add_eef.py` on each subfolder first and put the `-eef` folders in the parent.
+
+### Managing Episodes
+
+During collection: **B** discards the episode in progress. After the fact, use the dashboard's "Delete selected" (tick episodes, confirm; refused while recording). Without a running session:
+
+```bash
+uv run dhk-dataset list ~/hackathon_data/myteam-task
+uv run dhk-dataset drop ~/hackathon_data/myteam-task 3   # asks first; renumbers remaining
+```
+
+Episodes renumber after each drop — re-run `list` before dropping another. After dropping from a Metal/Maker dataset, re-run `add_eef.py ... --replace`.
+
 ### Tips for Hill Climb Score
 
 1. **Try base Dream-1 zero-shot first** — it scored 59.3% mean on RoboDojo-RC Tier 1, 95% on Stack Bowls. If the base model handles the task well enough, invest time in the harness instead of fine-tuning.
@@ -269,6 +308,8 @@ Pipeline: validate → register embodiment (once per account) → upload → wai
 7. **Design workspace away from joint limits** — precision tasks near limits are a documented Dream-1 weakness.
 
 8. **The harness is the differentiator.** Two teams with the same fine-tuned model will score differently based on: what they do when an action fails, whether they detect success, whether they retry intelligently. This is where to invest time beyond data collection.
+
+9. **Use Live View** (`dreamcli robot up`, or `dreamcli robot up joint` for YAM fine-tunes) to watch the cameras and start runs from the browser instead of the terminal.
 
 ### Relevant Local Files
 
