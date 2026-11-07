@@ -1,6 +1,6 @@
 # Dream Hackathon Kit
 
-Teach a pair of robot arms a task with a Meta Quest, then fine-tune Dream-1, the Dream Labs robot model, on your demonstrations and run it on the same arms.
+Put Dream-1, the Dream Labs robot model, to work on a pair of robot arms: run it as it is, build your own project on the Dream API, or teach it your task with demonstrations you record with a Meta Quest and fine-tune it on them (optional).
 
 Built for the [MakerMods Physical AI Hackathon](https://luma.com/pah) (November 7-8, San Francisco), presented with MakerMods and Dream Labs.
 
@@ -16,7 +16,15 @@ Every station has one overhead camera and one camera on each wrist (USB webcams 
 
 ## For participants
 
-Your station is ready: the arms, cameras, Quest and the Dream library are set up, and its config is `configs/station.yaml`. The station has no screen: you work on it over SSH from your laptop, and watch it in your laptop's browser. You do two things:
+Your station is ready: the arms, cameras, Quest and the Dream library are set up, and its config is `configs/station.yaml`. The station has no screen: you work on it over SSH from your laptop, and watch it in your laptop's browser.
+
+Dream-1 runs on your station's arms without any training, so fine-tuning is optional. Pick what suits your project, or combine them:
+
+- **Run Dream-1 as it is.** Give it a task in plain words and it drives the arms: `dreamcli robot run --task "..."` ([docs/running_your_model.md](docs/running_your_model.md#no-fine-tune-yet)).
+- **Build with the Dream API.** Write your own program around Dream-1: see [Build with the Dream API](#build-with-the-dream-api) below.
+- **Teach it your task (optional).** Collect demonstrations, then fine-tune Dream-1 on them: the two steps below.
+
+### Collect demonstrations and fine-tune (optional)
 
 1. **Collect demonstrations** ([docs/data_collection.md](docs/data_collection.md)). Hold a controller's grip to drive that arm and pull its trigger to close its gripper. Press A to start and stop recording an episode, and B to throw one away.
 
@@ -46,7 +54,7 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
    Your episodes are saved on the station in the `--dataset-dir` folder, here `~/hackathon_data/myteam-cubes`, as a LeRobot v2.1 dataset: not in the repo, and not uploaded until you fine-tune. [Where your data is stored](docs/data_collection.md#where-your-data-is-stored) shows what is inside and how to copy it to your laptop.
 
-2. **Fine-tune Dream-1 on them** ([docs/fine_tuning.md](docs/fine_tuning.md)). First save your team's API key on the station (the guide shows how). Then use `--arm yam`, `metal` or `maker`, whichever your station has:
+2. **Fine-tune Dream-1 on them** ([docs/fine_tuning.md](docs/fine_tuning.md)). This step is optional, takes hours and costs credits (see [Plan your time](#plan-your-time)). First save your team's API key on the station (the guide shows how). Then use `--arm yam`, `metal` or `maker`, whichever your station has:
 
    ```bash
    # Metal or Maker arms only: add the tool poses their models train on (writes ~/hackathon_data/myteam-cubes-eef)
@@ -57,12 +65,24 @@ Your station is ready: the arms, cameras, Quest and the Dream library are set up
 
 When your model is ready, [run it on the arms](docs/running_your_model.md).
 
+### Build with the Dream API
+
+The Dream library on your station (`~/dream-env`) is the Python client of the [Dream API](https://platform.dreamlabs.ai/api-documentation/). With it you can build your own project around Dream-1, with or without a fine-tune: your program sends the cameras' frames, the arms' joints and a task, gets back the next moves and plays them on the arms, and you decide everything around that (which task comes next, when to stop, what the robot reacts to).
+
+- [Getting started](https://platform.dreamlabs.ai/api-documentation/): API keys and the library.
+- [Your own control loop](https://platform.dreamlabs.ai/api-documentation/control-loop/): the two calls, `set_observation()` and `get_action()`, a whole loop in one file, and how to check it before the first real run.
+- [Driver template and examples](https://platform.dreamlabs.ai/api-documentation/drivers/): Dream's drivers for the YAM, Metal and Maker arms, to start from.
+- [Live View](https://platform.dreamlabs.ai/api-documentation/live-view/): show your robot and its runs on the platform.
+- [Client reference](https://platform.dreamlabs.ai/api-documentation/reference/): every class and call.
+
+Your program runs in `~/dream-env` with your team's API key saved on the station ([docs/fine_tuning.md](docs/fine_tuning.md#before-you-start) shows how), and needs the arms to itself: close `dhk-collect` and `dreamcli` first. Using a coding agent? Dream's documentation is also an MCP server: the platform's Setup API page shows how to add it.
+
 ### Plan your time
 
-- **A fine-tuning job takes about 7 to 8 hours**, and may wait in a queue first. The first run of a new model then takes up to an hour to start. Queue your job early, ideally the evening of day one, and test on day two.
-- **A job costs the price the Dream platform's Billing page shows** ($200 at the time of writing), held from the account's prepaid credits when it is queued. Check with the organizers before you queue one.
+- **Dream-1 runs without fine-tuning.** Try it on your task first (`dreamcli robot run --task "..." --dry-run`, then without `--dry-run`): if it does well enough, or your project is built on the API, you may not need a fine-tune at all.
+- **If you fine-tune, a job takes about 7 to 8 hours**, and may wait in a queue first. The first run of a new model then takes up to an hour to start. Queue your job early, ideally the evening of day one, and test on day two.
+- **A job's price is not fixed: it grows with its training steps.** At the time of writing it is $100 for 500 steps, $200 for 1,000 (the default, and what `tools/finetune.py` runs) and $400 for 2,000; more steps also train longer. The platform's Fine-tune form shows the current price. It is held from the account's prepaid credits when the job is queued. Check with the organizers before you queue one.
 - **Tens of good demonstrations beat hundreds of rushed ones.** Plan for 50 or more episodes of one task, each 10 to 30 seconds. [docs/data_collection.md](docs/data_collection.md) has tips.
-- **No time to fine-tune?** Dream-1's base model runs on these arms without any fine-tuning; see [docs/running_your_model.md](docs/running_your_model.md).
 
 ## Safety
 

@@ -5,7 +5,7 @@ Guidance for Claude Code in this repository. The repo is the Dream hackathon kit
 ## Who you are helping
 
 - **Organizers** set up every station before the event. To set one up, check one or fix one, follow the `station-setup` skill (`/station-setup`), which walks `docs/hardware_setup.md`.
-- **Participants** arrive at a station that is already set up. They collect demonstrations (`docs/data_collection.md`) and fine-tune (`docs/fine_tuning.md`). Never send a participant through setup. If a device does not work, tell them to call the staff.
+- **Participants** arrive at a station that is already set up. They run Dream-1 as it is (`docs/running_your_model.md`), build their own programs on the Dream API (its docs, below), and may collect demonstrations (`docs/data_collection.md`) and fine-tune (`docs/fine_tuning.md`); fine-tuning is optional. Never send a participant through setup. If a device does not work, tell them to call the staff.
 
 ## Safety rules (always)
 
@@ -14,7 +14,7 @@ Guidance for Claude Code in this repository. The repo is the Dream hackathon kit
 3. **Never estimate an arm's tool center point** (`arms.<side>.tcp_xyz_m`). For the stock MakerMods gripper the organizers chose Dream's own point (the one `dreamcli robot run` uses): the templates carry it, and `~/dream-env/bin/python scripts/use_dream_tcp.py configs/station.yaml` writes it from the installed Dream library; the person checks it in a dry run (`docs/hardware_setup.md`, "Tool center point"). For any other gripper, ask the person to measure and confirm it, and continue only once they have. A URDF link, another arm's numbers or the YAM's are not this arm's tool center point.
 4. **Never guess `gripper_open_deg` or `gripper_closed_deg`.** Copy them from the config `dreamcli setup` wrote (`~/.dreamlabs/station.yaml`), matching each arm by its port.
 5. **Never print, copy or commit an API key.** Credentials live in `~/.dreamlabs/credentials`; read it only to check that it exists.
-6. **`tools/finetune.py` without `--check` queues a paid job** (the price is on the platform's Billing page). Confirm with the person before running it. `--check` is free and runs locally.
+6. **`tools/finetune.py` without `--check` queues a paid job** (its price grows with the training steps: $200 for the default 1,000 at the time of writing). Confirm with the person before running it. `--check` is free and runs locally.
 7. **`dhk-dataset drop`, and the dashboard's "Delete selected", delete recorded episodes.** Show the person what `dhk-dataset list` says and get their yes for the exact episode numbers first.
 
 ## Commands

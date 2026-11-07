@@ -10,8 +10,9 @@ Run it in ~/dream-env (the Dream library's environment, with your API key saved 
 ```
 
 The steps: register your robot's embodiment (once; reused after), check the dataset on this computer, upload it,
-wait for processing, queue the job and wait for your model. Training takes about 7 to 8 hours and costs the price
-the Billing page shows (a job's price is held from your credits when it is queued). Every wait can be stopped with
+wait for processing, queue the job and wait for your model. Training runs the service's default 1,000 steps, about
+7 to 8 hours; the price grows with the steps ($200 for 1,000 at the time of writing; the Fine-tune form shows the
+current one) and is held from your credits when the job is queued. Every wait can be stopped with
 Ctrl+C and picked up again: `--dataset-id ds_...` resumes after the upload, `--job-id ftj_...` after the job is queued.
 `--check` only runs the dataset checks, on this computer: nothing is sent and nothing is charged.
 """
