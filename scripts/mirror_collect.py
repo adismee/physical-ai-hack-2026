@@ -111,6 +111,10 @@ def main() -> None:
         "--grip-extra", type=float, default=0.15, metavar="EXTRA",
         help="How much extra the follower gripper closes past the leader's calibrated zero (default 0.15).",
     )
+    parser.add_argument(
+        "--no-gripper-hold", action="store_true",
+        help="Skip the metal gripper holding-torque controller (use if the gripper motor is unresponsive).",
+    )
     args = parser.parse_args()
 
     if args.leader == args.follower:
@@ -187,7 +191,7 @@ def main() -> None:
     follower_dev = Follower(FollowerConfig(
         port=follower_cfg.port, id=f"mirror_follower", can_interface=mm.can_interface
     ))
-    if metal_gripper is not None and FAMILY.supports_gripper_effort_control:
+    if metal_gripper is not None and FAMILY.supports_gripper_effort_control and not args.no_gripper_hold:
         metal_gripper.install_metal_gripper(follower_dev, "")
     FAMILY.prepare_teleoperation(follower_dev)
     FAMILY.prepare_leader_following(follower_dev)
