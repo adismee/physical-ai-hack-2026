@@ -16,9 +16,10 @@ Usage (THE RIGHT ARM WILL MOVE — support it before starting):
         --task "pick up the red cube" \\
         --gravity
 
-Controls (type then Enter):
+Controls (type then Enter, or use the browser dashboard on http://localhost:8080):
     Enter   Start a new episode (idle) / save the current episode (recording)
     d       Discard the current episode
+    h       Return follower to home pose
     q       Quit (saves active episode if one is running)
 
 The left arm is opened torque-off (or gravity-compensated with --gravity) — move it freely.
@@ -26,17 +27,24 @@ The right arm is opened energized and tracks the left arm in real time.
 """
 
 import argparse
+import dataclasses
+import http.server
+import json
 import math
 import pathlib
 import queue
+import re
 import sys
 import threading
 import time
 
+import cv2
 import numpy as np
 
 MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll")
 GRIPPER = "gripper"
+
+_CAMERA_PATH = re.compile(r"^/api/camera/([a-z_]+)\.jpg$")
 
 
 # ------------------------------------------------------------------ arm helpers
@@ -90,6 +98,230 @@ def _input_loop() -> None:
             break
 
 
+# ------------------------------------------------------------------ dashboard
+
+@dataclasses.dataclass
+class _DashState:
+    lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+    recording: bool = False
+    homing: bool = False
+    frames: int = 0
+    total_episodes: int = 0
+    task: str = ""
+    leader_grip: float = 0.0
+    shoulder_pan_deg: float = 0.0
+    camera_roles: list = dataclasses.field(default_factory=list)
+
+
+_PAGE = """\
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mirror Collect</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: monospace; background: #111; color: #eee; margin: 0; padding: 1rem; }
+  h1 { margin: 0 0 1rem; font-size: 1.1rem; color: #aaa; letter-spacing: 0.05em; }
+  #cameras { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .cam-wrap { display: flex; flex-direction: column; }
+  .cam-wrap img { width: 320px; height: 180px; object-fit: cover; background: #222; border: 1px solid #333; display: block; }
+  .cam-label { color: #666; font-size: 0.75rem; margin-top: 0.25rem; text-align: center; }
+  #status-bar { background: #1a1a1a; border: 1px solid #2a2a2a; padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; display: flex; gap: 2rem; align-items: center; flex-wrap: wrap; font-size: 0.9rem; }
+  .rec  { color: #f55; font-weight: bold; }
+  .homing { color: #fa0; font-weight: bold; }
+  .idle { color: #666; }
+  #controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  button { font-family: monospace; font-size: 0.9rem; padding: 0.45rem 1rem; border: 1px solid #444; background: #1e1e1e; color: #ccc; cursor: pointer; border-radius: 3px; }
+  button:hover:not(:disabled) { background: #2a2a2a; border-color: #666; }
+  button:disabled { opacity: 0.3; cursor: default; }
+  #btn-primary { background: #0d2a0d; border-color: #2d6a2d; color: #8f8; }
+  #btn-primary:hover:not(:disabled) { background: #133813; }
+  #btn-discard { background: #2a0d0d; border-color: #6a2d2d; color: #f88; }
+  #btn-discard:hover:not(:disabled) { background: #381313; }
+  #task-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  #task-input { font-family: monospace; font-size: 0.9rem; flex: 1; background: #1a1a1a; border: 1px solid #3a3a3a; color: #eee; padding: 0.4rem 0.6rem; border-radius: 3px; min-width: 0; }
+  #task-input:focus { outline: none; border-color: #555; }
+</style>
+</head>
+<body>
+<h1>Mirror Collect Dashboard</h1>
+<div id="cameras"></div>
+<div id="status-bar">
+  <span id="mode" class="idle">&#9675; idle</span>
+  <span id="frames">0 frames</span>
+  <span id="epcnt">0 episodes</span>
+  <span id="pan">pan=&#8212;</span>
+  <span id="grip">grip=&#8212;</span>
+</div>
+<div id="controls">
+  <button id="btn-primary" onclick="primaryAction()">Start Episode</button>
+  <button id="btn-discard" onclick="doPost('/api/episode/discard')" disabled>Discard</button>
+  <button id="btn-home" onclick="doPost('/api/home')">&#8629; Go to Home</button>
+</div>
+<div id="task-row">
+  <input id="task-input" type="text" placeholder="Task description (set before starting episode)">
+  <button onclick="setTask()">Set Task</button>
+</div>
+<script>
+const HDR = {'X-Mirror-Dashboard': '1'};
+let _recording = false, _homing = false, _cameras = [];
+
+function doPost(url, body) {
+  const opts = {method: 'POST', headers: {...HDR}};
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  fetch(url, opts).catch(() => {});
+}
+
+function primaryAction() {
+  if (_recording) doPost('/api/episode/save');
+  else doPost('/api/episode/start');
+}
+
+function setTask() {
+  const t = document.getElementById('task-input').value.trim();
+  if (t) doPost('/api/task', {task: t});
+}
+
+function updateCameras(cameras) {
+  if (JSON.stringify(cameras) === JSON.stringify(_cameras)) return;
+  _cameras = cameras;
+  const grid = document.getElementById('cameras');
+  grid.innerHTML = '';
+  cameras.forEach(role => {
+    const wrap = document.createElement('div');
+    wrap.className = 'cam-wrap';
+    const img = document.createElement('img');
+    img.id = 'cam-' + role;
+    const lbl = document.createElement('div');
+    lbl.className = 'cam-label';
+    lbl.textContent = role;
+    wrap.appendChild(img);
+    wrap.appendChild(lbl);
+    grid.appendChild(wrap);
+  });
+}
+
+function refreshCameras() {
+  _cameras.forEach(role => {
+    const img = document.getElementById('cam-' + role);
+    if (img) img.src = '/api/camera/' + role + '.jpg?t=' + Date.now();
+  });
+}
+
+function pollStatus() {
+  fetch('/api/status').then(r => r.json()).then(s => {
+    _recording = s.recording;
+    _homing = s.homing;
+    updateCameras(s.cameras || []);
+
+    const mode = document.getElementById('mode');
+    if (s.homing)         { mode.className = 'homing'; mode.innerHTML = '&#8629; HOMING'; }
+    else if (s.recording) { mode.className = 'rec';    mode.innerHTML = '&#9679; REC'; }
+    else                  { mode.className = 'idle';   mode.innerHTML = '&#9675; idle'; }
+
+    document.getElementById('frames').textContent = s.frames + ' frames';
+    document.getElementById('epcnt').textContent  = s.total_episodes + ' episodes';
+    document.getElementById('pan').textContent    = 'pan=' + (s.shoulder_pan_deg != null ? s.shoulder_pan_deg.toFixed(1) + '\\u00b0' : '\\u2014');
+    document.getElementById('grip').textContent   = 'grip=' + (s.leader_grip != null ? s.leader_grip.toFixed(2) : '\\u2014');
+
+    const busy = s.recording || s.homing;
+    document.getElementById('btn-primary').disabled  = s.homing;
+    document.getElementById('btn-primary').textContent = s.recording ? 'Save Episode' : 'Start Episode';
+    document.getElementById('btn-discard').disabled  = !s.recording;
+    document.getElementById('btn-home').disabled     = busy;
+
+    if (s.task) {
+      const inp = document.getElementById('task-input');
+      if (!inp.value) inp.placeholder = s.task;
+    }
+  }).catch(() => {});
+}
+
+setInterval(pollStatus, 300);
+setInterval(refreshCameras, 200);
+pollStatus();
+</script>
+</body>
+</html>
+"""
+
+
+def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict) -> type:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                self._send(200, "text/html; charset=utf-8", _PAGE.encode())
+            elif path == "/api/status":
+                with dash_state.lock:
+                    snap = {
+                        "recording": dash_state.recording,
+                        "homing": dash_state.homing,
+                        "frames": dash_state.frames,
+                        "total_episodes": dash_state.total_episodes,
+                        "task": dash_state.task,
+                        "leader_grip": dash_state.leader_grip,
+                        "shoulder_pan_deg": dash_state.shoulder_pan_deg,
+                        "cameras": list(dash_state.camera_roles),
+                    }
+                self._send(200, "application/json", json.dumps(snap).encode())
+            elif m := _CAMERA_PATH.match(path):
+                role = m.group(1)
+                if role not in cams:
+                    self._send(404, "text/plain", b"no such camera")
+                    return
+                try:
+                    frame = cams[role].latest()
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if not ok:
+                        raise RuntimeError("encode failed")
+                    self._send(200, "image/jpeg", buf.tobytes(), extra={"Cache-Control": "no-store"})
+                except Exception:
+                    self._send(503, "text/plain", b"camera unavailable")
+            else:
+                self._send(404, "text/plain", b"not found")
+
+        def do_POST(self) -> None:  # noqa: N802
+            if not self.headers.get("X-Mirror-Dashboard"):
+                self._send(403, "text/plain", b"forbidden")
+                return
+            path = self.path.split("?", 1)[0]
+            if path in ("/api/episode/start", "/api/episode/save"):
+                cmd_q.put("")
+            elif path == "/api/episode/discard":
+                cmd_q.put("d")
+            elif path == "/api/home":
+                cmd_q.put("h")
+            elif path == "/api/task":
+                length = int(self.headers.get("Content-Length", 0))
+                try:
+                    body = json.loads(self.rfile.read(length))
+                    with dash_state.lock:
+                        dash_state.task = str(body.get("task", ""))[:512]
+                except Exception:
+                    self._send(400, "text/plain", b"bad request")
+                    return
+            else:
+                self._send(404, "text/plain", b"not found")
+                return
+            self._send(200, "application/json", b'{"ok":true}')
+
+        def _send(self, code: int, ctype: str, body: bytes, *, extra: dict | None = None) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            pass  # silence per-request logs
+
+    return Handler
+
+
 # ------------------------------------------------------------------ main
 
 def main() -> None:
@@ -115,6 +347,7 @@ def main() -> None:
         "--no-gripper-hold", action="store_true",
         help="Skip the metal gripper holding-torque controller (use if the gripper motor is unresponsive).",
     )
+    parser.add_argument("--port", type=int, default=8080, help="Dashboard port (default 8080).")
     args = parser.parse_args()
 
     if args.leader == args.follower:
@@ -148,6 +381,22 @@ def main() -> None:
     cams = cam_mod.open_cameras(station.cameras, width=station.record_width, height=station.record_height)
     vk = layouts.video_keys(station.family)
     video_key_map = {"overhead": vk["overhead"], "wrist_l": vk["wrist_l"], "wrist_r": vk["wrist_r"]}
+
+    # ---- dashboard state + server
+    dash_state = _DashState(task=args.task or "mirror teleoperation")
+    with dash_state.lock:
+        dash_state.camera_roles = list(cams.keys())
+
+    try:
+        _server = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", args.port),
+            _make_handler(dash_state, _cmd_q, cams),
+        )
+        _server.daemon_threads = True
+        threading.Thread(target=_server.serve_forever, name="dashboard", daemon=True).start()
+        print(f"dashboard: http://localhost:{args.port}  (remote: ssh -L {args.port}:localhost:{args.port} <user>@<station>)")
+    except OSError as e:
+        print(f"Warning: could not start dashboard on port {args.port} ({e}). Continuing without it.")
 
     # ---- open leader arm (torque off or gravity-compensated)
     leader_cfg = station.arms[args.leader]
@@ -249,14 +498,19 @@ def main() -> None:
     episode = None
     tick = 0
 
-    print("\nReady. Controls (type then Enter):")
+    print("\nReady. Controls (type then Enter, or use the dashboard):")
     print("  Enter — start episode / save episode")
     print("  d     — discard episode")
+    print("  h     — go to home pose")
     print("  q     — quit\n")
 
     try:
         while True:
             t0 = time.monotonic()
+
+            # Snapshot homing flag once per tick (avoid holding lock during arm I/O)
+            with dash_state.lock:
+                _homing_now = dash_state.homing
 
             # Read arms
             try:
@@ -275,11 +529,26 @@ def main() -> None:
                 follower_joints = np.zeros(6)
                 follower_grip = 0.0
 
-            # Command follower to track leader
-            try:
-                _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
-            except Exception as e:
-                print(f"command error: {e}")
+            # Command follower: home sequence takes priority over mirroring
+            if _homing_now:
+                try:
+                    curr_joints = follower_joints
+                    delta = home_joints - curr_joints
+                    dist = float(np.max(np.abs(delta)))
+                    if dist < 1e-3:
+                        with dash_state.lock:
+                            dash_state.homing = False
+                        print("↩ Home reached.")
+                    else:
+                        step = np.clip(delta, -HOME_SPEED * dt, HOME_SPEED * dt)
+                        _command_follower(follower_dev, follower_cfg, curr_joints + step, home_grip, args.grip_extra)
+                except Exception as e:
+                    print(f"home step error: {e}")
+            else:
+                try:
+                    _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
+                except Exception as e:
+                    print(f"command error: {e}")
 
             # Record frame
             if episode is not None and tick % record_every == 0:
@@ -288,13 +557,21 @@ def main() -> None:
                 grips_map = {args.leader: leader_grip, args.follower: leader_grip}
                 measured_joints = {args.leader: leader_joints, args.follower: follower_joints}
                 measured_grips = {args.leader: leader_grip, args.follower: follower_grip}
-                state = layouts.to_vector(station.arm, measured_joints, measured_grips)
-                action = layouts.to_vector(station.arm, joints_map, grips_map)
-                episode.add_frame(state=state, action=action, images=images)
+                vec_state = layouts.to_vector(station.arm, measured_joints, measured_grips)
+                vec_action = layouts.to_vector(station.arm, joints_map, grips_map)
+                episode.add_frame(state=vec_state, action=vec_action, images=images)
 
             tick += 1
 
-            # Handle keyboard commands
+            # Update dashboard state
+            with dash_state.lock:
+                dash_state.recording = episode is not None
+                dash_state.frames = episode.frames if episode is not None else 0
+                dash_state.total_episodes = writer.total_episodes
+                dash_state.leader_grip = leader_grip
+                dash_state.shoulder_pan_deg = math.degrees(leader_joints[0])
+
+            # Handle keyboard / dashboard commands
             try:
                 cmd = _cmd_q.get_nowait()
             except queue.Empty:
@@ -302,8 +579,13 @@ def main() -> None:
 
             if cmd is not None:
                 if cmd == "" or cmd == "s":        # Enter / s = start or save
-                    if episode is None:
-                        episode = writer.start_episode(args.task or "mirror teleoperation")
+                    with dash_state.lock:
+                        _is_homing = dash_state.homing
+                        task_text = dash_state.task or "mirror teleoperation"
+                    if _is_homing:
+                        print("(cannot start while homing — wait for home to complete)")
+                    elif episode is None:
+                        episode = writer.start_episode(task_text)
                         print(f"● Recording episode {writer.total_episodes} ...")
                     else:
                         idx = episode.save()
@@ -316,6 +598,13 @@ def main() -> None:
                         episode = None
                     else:
                         print("(no episode recording)")
+                elif cmd == "h":                    # go to home
+                    if episode is not None:
+                        print("(cannot home while recording — save or discard first)")
+                    else:
+                        with dash_state.lock:
+                            dash_state.homing = True
+                        print("↩ Returning to home pose ...")
                 elif cmd == "q":                    # quit
                     if episode is not None:
                         idx = episode.save()
@@ -324,7 +613,7 @@ def main() -> None:
 
             # Print status every ~2s
             if tick % (station.control_hz * 2) == 0:
-                status = "● REC" if episode is not None else "○ idle"
+                status = "● REC" if episode is not None else ("↩ HOME" if _homing_now else "○ idle")
                 pan = math.degrees(leader_joints[0])
                 print(f"{status}  shoulder_pan={pan:+.1f}°  grip={leader_grip:.2f}  episodes={writer.total_episodes}")
 
