@@ -37,6 +37,7 @@ import re
 import sys
 import threading
 import time
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -44,7 +45,23 @@ import numpy as np
 MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll")
 GRIPPER = "gripper"
 
+## The homing ramp's joint speed (rad/s), and how close to home counts as home (radians).
+HOME_SPEED = 0.5
+HOME_TOLERANCE_RAD = 1e-3
+## Homing gives up after this long and mirroring resumes, so a joint that cannot reach home cannot lock the session.
+HOME_TIMEOUT_S = 30.0
+## The task an episode records when none is given, and the longest task text Dream accepts (as in collect.py).
+DEFAULT_TASK = "mirror teleoperation"
+TASK_MAX_CHARS = 512
+## The dashboard reads at most this many bytes of a request body, and waits this long for a client's bytes.
+MAX_BODY_BYTES = 4096
+REQUEST_TIMEOUT_S = 5
+
 _CAMERA_PATH = re.compile(r"^/api/camera/([a-z_]+)\.jpg$")
+## The dashboard answers only to the loopback names, on any port (an SSH forward may use another local one): a web page
+## that rebinds its own name to 127.0.0.1 then gets nothing.
+_LOOPBACK_HOST = re.compile(r"(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?")
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 # ------------------------------------------------------------------ arm helpers
@@ -80,6 +97,75 @@ def _command_follower(device, arm_cfg, joints_rad: np.ndarray, grip: float, grip
     # grip_extra shifts the follower gripper more closed than the leader (closes the gap at the hard stop).
     action[f"{GRIPPER}.pos"] = _gripper_deg(arm_cfg, grip - grip_extra)
     device.send_action(action)
+
+
+# ------------------------------------------------------------------ loop helpers
+
+def _home_step(
+    measured: np.ndarray | None, home: np.ndarray, max_step: float, elapsed_s: float
+) -> tuple[Literal["reached", "timeout", "hold", "move"], np.ndarray | None]:
+    """One tick of the homing ramp.
+
+    @param measured The follower's joints in radians, or None when they could not be read this tick.
+    @param home The joints to return to.
+    @param max_step The most any joint may move this tick, in radians.
+    @param elapsed_s How long homing has been running.
+    @return ("reached", None) once every joint is within HOME_TOLERANCE_RAD of home; ("timeout", None) after
+        HOME_TIMEOUT_S; ("hold", None) while the joints are unknown (a ramp from a placeholder pose would command a
+        jump); otherwise ("move", the next joint command).
+    """
+    if measured is not None and float(np.max(np.abs(home - measured))) < HOME_TOLERANCE_RAD:
+        return "reached", None
+    if elapsed_s > HOME_TIMEOUT_S:
+        return "timeout", None
+    if measured is None:
+        return "hold", None
+    return "move", measured + np.clip(home - measured, -max_step, max_step)
+
+
+def _episode_action(cmd: str, recording: bool) -> Literal["start", "save", "ignore"]:
+    """What a start or save command does now.
+
+    Enter and `s` on the keyboard toggle. The dashboard's "start" and "save" never do each other's job, so a double
+    click cannot save the episode it just began, or begin the one it just saved.
+    """
+    if cmd in ("", "s"):
+        return "save" if recording else "start"
+    if cmd == "start":
+        return "ignore" if recording else "start"
+    if cmd == "save":
+        return "save" if recording else "ignore"
+    return "ignore"
+
+
+def _save_episode(episode) -> int | None:
+    """Saves an episode and returns its index, or None when it was too short to keep.
+
+    save() has already discarded a too-short episode; reporting it is enough, since ending the session would leave the
+    follower energized in the middle of the loop.
+    """
+    from dream_hackathon.dataset import DatasetError
+
+    try:
+        return episode.save()
+    except DatasetError as error:
+        print(f"✗ Not saved: {error}")
+        return None
+
+
+def _task_or_default(text: str) -> str:
+    """The task text an episode records: `text` without surrounding blanks, or DEFAULT_TASK when nothing is left."""
+    return text.strip() or DEFAULT_TASK
+
+
+def _clean_task(text: str) -> str:
+    """A task text from the page: one line (control characters become spaces), trimmed, at most TASK_MAX_CHARS."""
+    return _CONTROL_CHARACTERS.sub(" ", text).strip()[:TASK_MAX_CHARS].rstrip()
+
+
+def _host_allowed(host: str | None) -> bool:
+    """True when a request's Host header names the loopback address the dashboard is served on."""
+    return host is not None and _LOOPBACK_HOST.fullmatch(host.strip().lower()) is not None
 
 
 # ------------------------------------------------------------------ input thread
@@ -249,7 +335,12 @@ pollStatus();
 
 def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict) -> type:
     class Handler(http.server.BaseHTTPRequestHandler):
+        timeout = REQUEST_TIMEOUT_S  # a client that stalls mid-request cannot hold a thread for ever
+
         def do_GET(self) -> None:  # noqa: N802
+            if not _host_allowed(self.headers.get("Host")):
+                self._send(403, "text/plain", b"forbidden")
+                return
             path = self.path.split("?", 1)[0]
             if path == "/":
                 self._send(200, "text/html; charset=utf-8", _PAGE.encode())
@@ -283,25 +374,42 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
                 self._send(404, "text/plain", b"not found")
 
         def do_POST(self) -> None:  # noqa: N802
-            if not self.headers.get("X-Mirror-Dashboard"):
+            host = self.headers.get("Host")
+            origin = self.headers.get("Origin")
+            # An action is taken only from the page itself: a loopback Host, the custom header (which a cross-site
+            # form cannot set) and, when the browser sends an Origin, one that names this page's address.
+            if (
+                not _host_allowed(host)
+                or not self.headers.get("X-Mirror-Dashboard")
+                or (origin and origin != f"http://{host}")
+            ):
                 self._send(403, "text/plain", b"forbidden")
                 return
             path = self.path.split("?", 1)[0]
-            if path in ("/api/episode/start", "/api/episode/save"):
-                cmd_q.put("")
+            if path == "/api/episode/start":
+                cmd_q.put("start")
+            elif path == "/api/episode/save":
+                cmd_q.put("save")
             elif path == "/api/episode/discard":
                 cmd_q.put("d")
             elif path == "/api/home":
                 cmd_q.put("h")
             elif path == "/api/task":
-                length = int(self.headers.get("Content-Length", 0))
-                try:
-                    body = json.loads(self.rfile.read(length))
-                    with dash_state.lock:
-                        dash_state.task = str(body.get("task", ""))[:512]
-                except Exception:
+                length = self.headers.get("Content-Length", "")
+                if not (length.isascii() and length.isdigit()):
                     self._send(400, "text/plain", b"bad request")
                     return
+                if int(length) > MAX_BODY_BYTES:
+                    self._send(413, "text/plain", b"request too large")
+                    return
+                try:
+                    body = json.loads(self.rfile.read(int(length)))
+                    task = _clean_task(str(body.get("task", "")))
+                except (ValueError, AttributeError, OSError, RecursionError):
+                    self._send(400, "text/plain", b"bad request")
+                    return
+                with dash_state.lock:
+                    dash_state.task = task
             else:
                 self._send(404, "text/plain", b"not found")
                 return
@@ -383,7 +491,7 @@ def main() -> None:
     video_key_map = {"overhead": vk["overhead"], "wrist_l": vk["wrist_l"], "wrist_r": vk["wrist_r"]}
 
     # ---- dashboard state + server
-    dash_state = _DashState(task=args.task or "mirror teleoperation")
+    dash_state = _DashState(task=_task_or_default(args.task))
     with dash_state.lock:
         dash_state.camera_roles = list(cams.keys())
 
@@ -454,7 +562,6 @@ def main() -> None:
 
     # ---- move follower to home
     print("Moving follower to home pose ...")
-    HOME_SPEED = 0.5  # rad/s
     dt_home = 1.0 / station.control_hz
     while True:
         try:
@@ -497,6 +604,7 @@ def main() -> None:
     record_every = station.control_hz // station.fps
     episode = None
     tick = 0
+    homing_since: float | None = None
 
     print("\nReady. Controls (type then Enter, or use the dashboard):")
     print("  Enter — start episode / save episode")
@@ -512,12 +620,15 @@ def main() -> None:
             with dash_state.lock:
                 _homing_now = dash_state.homing
 
-            # Read arms
+            # Read arms. A failed read (a motor that stopped answering, say) is never turned into a pose that is
+            # commanded or recorded: the follower holds where it is and the frame is skipped.
+            leader_ok = follower_ok = True
             try:
                 leader_degs = _read_leader_degs(leader_dev, leader_gravity)
                 leader_joints, leader_grip = _degs_to_joints_grip(leader_degs, leader_cfg)
             except Exception as e:
                 print(f"leader read error: {e}")
+                leader_ok = False
                 leader_joints = np.zeros(6)
                 leader_grip = 0.0
 
@@ -526,32 +637,44 @@ def main() -> None:
                 follower_joints, follower_grip = _degs_to_joints_grip(follower_degs, follower_cfg)
             except Exception as e:
                 print(f"follower read error: {e}")
+                follower_ok = False
                 follower_joints = np.zeros(6)
                 follower_grip = 0.0
 
             # Command follower: home sequence takes priority over mirroring
             if _homing_now:
-                try:
-                    curr_joints = follower_joints
-                    delta = home_joints - curr_joints
-                    dist = float(np.max(np.abs(delta)))
-                    if dist < 1e-3:
-                        with dash_state.lock:
-                            dash_state.homing = False
+                if homing_since is None:
+                    homing_since = time.monotonic()
+                outcome, command = _home_step(
+                    follower_joints if follower_ok else None,
+                    home_joints,
+                    HOME_SPEED * dt,
+                    time.monotonic() - homing_since,
+                )
+                if outcome == "move":
+                    try:
+                        _command_follower(follower_dev, follower_cfg, command, home_grip, args.grip_extra)
+                    except Exception as e:
+                        print(f"home step error: {e}")
+                elif outcome != "hold":
+                    with dash_state.lock:
+                        dash_state.homing = False
+                    if outcome == "reached":
                         print("↩ Home reached.")
                     else:
-                        step = np.clip(delta, -HOME_SPEED * dt, HOME_SPEED * dt)
-                        _command_follower(follower_dev, follower_cfg, curr_joints + step, home_grip, args.grip_extra)
-                except Exception as e:
-                    print(f"home step error: {e}")
+                        print(
+                            f"↩ Homing gave up after {HOME_TIMEOUT_S:.0f} s; mirroring resumes where the arm stopped."
+                        )
             else:
-                try:
-                    _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
-                except Exception as e:
-                    print(f"command error: {e}")
+                homing_since = None
+                if leader_ok:
+                    try:
+                        _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
+                    except Exception as e:
+                        print(f"command error: {e}")
 
             # Record frame
-            if episode is not None and tick % record_every == 0:
+            if episode is not None and leader_ok and follower_ok and tick % record_every == 0:
                 images = {video_key_map[role]: cams[role].latest() for role in ("overhead", "wrist_l", "wrist_r")}
                 joints_map = {args.leader: leader_joints, args.follower: leader_joints}
                 grips_map = {args.leader: leader_grip, args.follower: leader_grip}
@@ -578,19 +701,23 @@ def main() -> None:
                 cmd = None
 
             if cmd is not None:
-                if cmd == "" or cmd == "s":        # Enter / s = start or save
+                if cmd in ("", "s", "start", "save"):  # Enter / s toggle; the dashboard asks for start or save
+                    action = _episode_action(cmd, recording=episode is not None)
                     with dash_state.lock:
                         _is_homing = dash_state.homing
-                        task_text = dash_state.task or "mirror teleoperation"
-                    if _is_homing:
+                        task_text = _task_or_default(dash_state.task)
+                    if action == "start" and _is_homing:
                         print("(cannot start while homing — wait for home to complete)")
-                    elif episode is None:
+                    elif action == "start":
                         episode = writer.start_episode(task_text)
                         print(f"● Recording episode {writer.total_episodes} ...")
+                    elif action == "save":
+                        idx = _save_episode(episode)
+                        if idx is not None:
+                            print(f"✓ Saved episode {idx}  ({writer.total_episodes} total)")
+                        episode = None  # a too-short episode is already discarded by save()
                     else:
-                        idx = episode.save()
-                        print(f"✓ Saved episode {idx}  ({writer.total_episodes} total)")
-                        episode = None
+                        print("(already recording)" if episode is not None else "(no episode recording)")
                 elif cmd == "d":                    # discard
                     if episode is not None:
                         episode.discard()
@@ -607,8 +734,9 @@ def main() -> None:
                         print("↩ Returning to home pose ...")
                 elif cmd == "q":                    # quit
                     if episode is not None:
-                        idx = episode.save()
-                        print(f"✓ Saved episode {idx} before quitting.")
+                        idx = _save_episode(episode)
+                        if idx is not None:
+                            print(f"✓ Saved episode {idx} before quitting.")
                     break
 
             # Print status every ~2s
