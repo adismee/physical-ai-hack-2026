@@ -6,15 +6,18 @@ tools/add_eef.py and tools/finetune.py.
 Usage (THE RIGHT ARM WILL MOVE — support it before starting):
     uv run python scripts/mirror_collect.py \\
         --config configs/station.yaml \\
-        --dataset ~/hackathon_data/my-task \\
         --task "pick up the red cube"
 
     # Gravity compensation / weightless mode (Metal arms only, requires pinocchio):
     uv run python scripts/mirror_collect.py \\
         --config configs/station.yaml \\
-        --dataset ~/hackathon_data/my-task \\
         --task "pick up the red cube" \\
         --gravity
+
+Each task gets a dataset folder of its own, named after it, under --data-root (default ~/hackathon_data): the task
+above is saved in ~/hackathon_data/pick-up-the-red-cube. Type another task on the dashboard and press "Set Task" to
+create the next folder; the episodes after that are saved there. Start without --task to begin from the dashboard.
+To record everything into one folder instead, give --dataset ~/hackathon_data/my-task.
 
 Controls (type then Enter, or use the browser dashboard on http://localhost:8080):
     Enter   Start a new episode (idle) / save the current episode (recording)
@@ -28,6 +31,7 @@ The right arm is opened energized and tracks the left arm in real time.
 
 import argparse
 import dataclasses
+import hashlib
 import http.server
 import json
 import math
@@ -37,7 +41,9 @@ import re
 import sys
 import threading
 import time
-from typing import Literal
+import unicodedata
+from collections.abc import Callable
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -56,6 +62,9 @@ TASK_MAX_CHARS = 512
 ## The dashboard reads at most this many bytes of a request body, and waits this long for a client's bytes.
 MAX_BODY_BYTES = 4096
 REQUEST_TIMEOUT_S = 5
+## Each task's dataset goes in a folder of its own under the data root; a folder's name is at most this long.
+DEFAULT_DATA_ROOT = "~/hackathon_data"
+FOLDER_MAX_CHARS = 50
 
 _CAMERA_PATH = re.compile(r"^/api/camera/([a-z_]+)\.jpg$")
 ## The dashboard answers only to the loopback names, on any port (an SSH forward may use another local one): a web page
@@ -168,6 +177,71 @@ def _host_allowed(host: str | None) -> bool:
     return host is not None and _LOOPBACK_HOST.fullmatch(host.strip().lower()) is not None
 
 
+def _task_folder(task: str) -> str:
+    """The name of the dataset folder for a task: lowercase letters, digits and hyphens, at most FOLDER_MAX_CHARS.
+
+    That is what Dream accepts for a dataset's name. Accents are dropped (é becomes e) and anything else, slashes and
+    dots included, becomes a hyphen, so the name can never point outside the data root. A task with no Latin letter or
+    digit gets `task-` and a short hash of its text, so different tasks never share a folder.
+    """
+    ascii_text = unicodedata.normalize("NFKD", task).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:FOLDER_MAX_CHARS].strip("-")
+    return slug or "task-" + hashlib.sha1(task.encode(), usedforsecurity=False).hexdigest()[:8]
+
+
+class _TaskFolders:
+    """The dataset of the current task: one folder per task under `root`, named after it and created when it is set.
+
+    A `pinned` folder replaces that: the one folder is used whatever the task says.
+
+    Attributes:
+    - writer: The open dataset, or None until a task has been set.
+    - error: Why the last task's folder could not be opened, or None. While it is set, `writer` is still the previous
+      task's, so the caller must not record.
+    """
+
+    def __init__(
+        self,
+        root: pathlib.Path,
+        open_writer: Callable[[pathlib.Path], Any],
+        pinned: pathlib.Path | None = None,
+    ) -> None:
+        """@param open_writer Opens the dataset writer for a folder; may raise DatasetError."""
+        self.root = root
+        self.pinned = pinned
+        self.writer: Any = None
+        self.error: str | None = None
+        self._open_writer = open_writer
+
+    @property
+    def folder(self) -> pathlib.Path | None:
+        return None if self.writer is None else self.writer.root
+
+    @property
+    def saved_episodes(self) -> int:
+        return 0 if self.writer is None else self.writer.total_episodes
+
+    def use(self, task: str) -> bool:
+        """Opens, creating it if needed, the folder for `task`, unless that is the open one already.
+
+        @return True when the task's folder is open, so recording into it is right.
+        """
+        from dream_hackathon.dataset import DatasetError
+
+        path = self.pinned or self.root / _task_folder(task)
+        if self.writer is not None and self.writer.root == path:
+            self.error = None
+            return True
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            self.writer = self._open_writer(path)
+        except (OSError, DatasetError) as error:
+            self.error = f"{path.name}: {error}"
+            return False
+        self.error = None
+        return True
+
+
 # ------------------------------------------------------------------ input thread
 
 _cmd_q: queue.Queue[str] = queue.Queue()
@@ -197,6 +271,12 @@ class _DashState:
     leader_grip: float = 0.0
     shoulder_pan_deg: float = 0.0
     camera_roles: list = dataclasses.field(default_factory=list)
+    # True when the task names the dataset folder; `folder` is the open one, `folder_error` why a task's could not be
+    # opened, and `task_version` counts the tasks set from the page (the control loop opens the folder of a new one).
+    per_task: bool = False
+    folder: str = ""
+    folder_error: str = ""
+    task_version: int = 0
 
 
 _PAGE = """\
@@ -217,6 +297,8 @@ _PAGE = """\
   .rec  { color: #f55; font-weight: bold; }
   .homing { color: #fa0; font-weight: bold; }
   .idle { color: #666; }
+  #folder { color: #8ab; font-size: 0.8rem; word-break: break-all; margin: -0.5rem 0 1rem; }
+  #folder.err { color: #f55; }
   #controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
   button { font-family: monospace; font-size: 0.9rem; padding: 0.45rem 1rem; border: 1px solid #444; background: #1e1e1e; color: #ccc; cursor: pointer; border-radius: 3px; }
   button:hover:not(:disabled) { background: #2a2a2a; border-color: #666; }
@@ -249,6 +331,7 @@ _PAGE = """\
   <input id="task-input" type="text" placeholder="Task description (set before starting episode)">
   <button onclick="setTask()">Set Task</button>
 </div>
+<div id="folder"></div>
 <script>
 const HDR = {'X-Mirror-Dashboard': '1'};
 let _recording = false, _homing = false, _cameras = [];
@@ -312,14 +395,23 @@ function pollStatus() {
     document.getElementById('grip').textContent   = 'grip=' + (s.leader_grip != null ? s.leader_grip.toFixed(2) : '\\u2014');
 
     const busy = s.recording || s.homing;
-    document.getElementById('btn-primary').disabled  = s.homing;
+    // Without a folder (no task set yet, or its folder could not be opened) an episode has nowhere to go.
+    const noFolder = (s.per_task && !s.folder) || !!s.folder_error;
+    document.getElementById('btn-primary').disabled  = s.homing || (!s.recording && noFolder);
     document.getElementById('btn-primary').textContent = s.recording ? 'Save Episode' : 'Start Episode';
     document.getElementById('btn-discard').disabled  = !s.recording;
     document.getElementById('btn-home').disabled     = busy;
 
-    if (s.task) {
-      const inp = document.getElementById('task-input');
-      if (!inp.value) inp.placeholder = s.task;
+    const folder = document.getElementById('folder');
+    folder.className = s.folder_error ? 'err' : '';
+    folder.textContent = s.folder_error ? 'folder: ' + s.folder_error
+      : s.folder ? 'folder: ' + s.folder
+      : s.per_task ? 'folder: none yet, set a task' : '';
+
+    const inp = document.getElementById('task-input');
+    if (!inp.value) {
+      inp.placeholder = s.task
+        || (s.per_task ? 'Task name: creates its folder, e.g. pick up the red cube' : 'Task description');
     }
   }).catch(() => {});
 }
@@ -355,6 +447,9 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
                         "leader_grip": dash_state.leader_grip,
                         "shoulder_pan_deg": dash_state.shoulder_pan_deg,
                         "cameras": list(dash_state.camera_roles),
+                        "per_task": dash_state.per_task,
+                        "folder": dash_state.folder,
+                        "folder_error": dash_state.folder_error,
                     }
                 self._send(200, "application/json", json.dumps(snap).encode())
             elif m := _CAMERA_PATH.match(path):
@@ -409,7 +504,13 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
                     self._send(400, "text/plain", b"bad request")
                     return
                 with dash_state.lock:
-                    dash_state.task = task
+                    refused = dash_state.per_task and not task  # the task names the folder, so it cannot be blank
+                    if not refused:
+                        dash_state.task = task
+                        dash_state.task_version += 1
+                if refused:
+                    self._send(400, "text/plain", b"a task name is needed")
+                    return
             else:
                 self._send(404, "text/plain", b"not found")
                 return
@@ -435,8 +536,17 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mirror teleoperation + recording. THE RIGHT ARM WILL MOVE.")
     parser.add_argument("--config", default="configs/station.yaml")
-    parser.add_argument("--dataset", required=True, help="Dataset folder path, e.g. ~/hackathon_data/my-task")
-    parser.add_argument("--task", default="", help="Task description recorded with every episode")
+    parser.add_argument(
+        "--data-root", default=DEFAULT_DATA_ROOT,
+        help="Where each task's dataset folder goes: the task you set (here or on the dashboard) names its folder "
+        f"(default {DEFAULT_DATA_ROOT}).",
+    )
+    parser.add_argument(
+        "--dataset", default="",
+        help="Record every episode into this one folder instead, e.g. ~/hackathon_data/my-task; the task is then only "
+        "a label.",
+    )
+    parser.add_argument("--task", default="", help="Task description recorded with every episode (names its folder)")
     parser.add_argument("--leader", default="left", choices=["left", "right"], help="Which arm to move by hand")
     parser.add_argument("--follower", default="right", choices=["left", "right"], help="Which arm tracks the leader")
     parser.add_argument(
@@ -491,7 +601,8 @@ def main() -> None:
     video_key_map = {"overhead": vk["overhead"], "wrist_l": vk["wrist_l"], "wrist_r": vk["wrist_r"]}
 
     # ---- dashboard state + server
-    dash_state = _DashState(task=_task_or_default(args.task))
+    task_known = bool(args.dataset) or bool(args.task.strip())  # else the first task comes from the page
+    dash_state = _DashState(task=_task_or_default(args.task) if task_known else "", per_task=not args.dataset)
     with dash_state.lock:
         dash_state.camera_roles = list(cams.keys())
 
@@ -584,17 +695,28 @@ def main() -> None:
     state_names = []
     for side in layouts.SIDE_ORDER[station.family]:
         state_names += [f"{side}_joint_{i}" for i in range(layouts.JOINTS)] + [f"{side}_gripper"]
-    root = pathlib.Path(args.dataset).expanduser()
-    writer = ds.DatasetWriter(
-        root=root,
-        fps=station.fps,
-        robot_type=station.arm,
-        state_names=state_names,
-        video_keys=list(video_key_map.values()),
-        frame_width=station.record_width,
-        frame_height=station.record_height,
-    )
-    print(f"\nDataset: {root}  (episodes so far: {writer.total_episodes})")
+
+    def open_writer(path: pathlib.Path) -> "ds.DatasetWriter":
+        return ds.DatasetWriter(
+            root=path,
+            fps=station.fps,
+            robot_type=station.arm,
+            state_names=state_names,
+            video_keys=list(video_key_map.values()),
+            frame_width=station.record_width,
+            frame_height=station.record_height,
+        )
+
+    pinned = pathlib.Path(args.dataset).expanduser() if args.dataset else None
+    data_root = pathlib.Path(args.data_root).expanduser()
+    folders = _TaskFolders(data_root, open_writer, pinned=pinned)
+    if task_known:
+        if folders.use(args.task):
+            print(f"\nDataset: {folders.folder}  (episodes so far: {folders.saved_episodes})")
+        else:
+            print(f"\n✗ Cannot use the dataset folder ({folders.error}). Set another task on the dashboard.")
+    else:
+        print(f"\nNo task yet: set one on the dashboard. Its name becomes a folder in {data_root}.")
 
     # ---- start input thread
     threading.Thread(target=_input_loop, daemon=True).start()
@@ -605,6 +727,7 @@ def main() -> None:
     episode = None
     tick = 0
     homing_since: float | None = None
+    applied_task_version = 0
 
     print("\nReady. Controls (type then Enter, or use the dashboard):")
     print("  Enter — start episode / save episode")
@@ -616,9 +739,10 @@ def main() -> None:
         while True:
             t0 = time.monotonic()
 
-            # Snapshot homing flag once per tick (avoid holding lock during arm I/O)
+            # Snapshot the page's state once per tick (avoid holding the lock during arm I/O)
             with dash_state.lock:
                 _homing_now = dash_state.homing
+                task_version, task_now = dash_state.task_version, dash_state.task
 
             # Read arms. A failed read (a motor that stopped answering, say) is never turned into a pose that is
             # commanded or recorded: the follower holds where it is and the frame is skipped.
@@ -686,11 +810,23 @@ def main() -> None:
 
             tick += 1
 
+            # A task set on the page: create and open its folder as soon as no episode is recording (an episode in
+            # progress keeps the folder it started in).
+            if episode is None and task_version != applied_task_version:
+                applied_task_version = task_version
+                if pinned is None and task_now.strip():
+                    if folders.use(task_now):
+                        print(f"Dataset: {folders.folder}  (episodes so far: {folders.saved_episodes})")
+                    else:
+                        print(f"✗ Cannot use the folder for this task: {folders.error}")
+
             # Update dashboard state
             with dash_state.lock:
                 dash_state.recording = episode is not None
                 dash_state.frames = episode.frames if episode is not None else 0
-                dash_state.total_episodes = writer.total_episodes
+                dash_state.total_episodes = folders.saved_episodes
+                dash_state.folder = "" if folders.folder is None else str(folders.folder)
+                dash_state.folder_error = folders.error or ""
                 dash_state.leader_grip = leader_grip
                 dash_state.shoulder_pan_deg = math.degrees(leader_joints[0])
 
@@ -705,16 +841,21 @@ def main() -> None:
                     action = _episode_action(cmd, recording=episode is not None)
                     with dash_state.lock:
                         _is_homing = dash_state.homing
+                        task_set = bool(dash_state.task.strip())
                         task_text = _task_or_default(dash_state.task)
                     if action == "start" and _is_homing:
                         print("(cannot start while homing — wait for home to complete)")
+                    elif action == "start" and pinned is None and not task_set:
+                        print("(set a task first: its name becomes the folder the episodes are saved in)")
+                    elif action == "start" and not folders.use(task_text):  # the task's folder, whatever the loop did
+                        print(f"✗ Cannot start: {folders.error}")
                     elif action == "start":
-                        episode = writer.start_episode(task_text)
-                        print(f"● Recording episode {writer.total_episodes} ...")
+                        episode = folders.writer.start_episode(task_text)
+                        print(f"● Recording episode {folders.saved_episodes} in {folders.folder.name} ...")
                     elif action == "save":
                         idx = _save_episode(episode)
                         if idx is not None:
-                            print(f"✓ Saved episode {idx}  ({writer.total_episodes} total)")
+                            print(f"✓ Saved episode {idx}  ({folders.saved_episodes} total in {folders.folder.name})")
                         episode = None  # a too-short episode is already discarded by save()
                     else:
                         print("(already recording)" if episode is not None else "(no episode recording)")
@@ -743,7 +884,7 @@ def main() -> None:
             if tick % (station.control_hz * 2) == 0:
                 status = "● REC" if episode is not None else ("↩ HOME" if _homing_now else "○ idle")
                 pan = math.degrees(leader_joints[0])
-                print(f"{status}  shoulder_pan={pan:+.1f}°  grip={leader_grip:.2f}  episodes={writer.total_episodes}")
+                print(f"{status}  shoulder_pan={pan:+.1f}°  grip={leader_grip:.2f}  episodes={folders.saved_episodes}")
 
             # Sleep to maintain control rate
             elapsed = time.monotonic() - t0

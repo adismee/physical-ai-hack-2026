@@ -14,7 +14,7 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-from dream_hackathon import dataset
+from dream_hackathon import dataset, layouts
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "mirror_collect.py"
 HOME = np.zeros(6)
@@ -230,3 +230,164 @@ def test_a_short_episode_is_reported_and_the_session_goes_on(mc: ModuleType, cap
 def test_any_other_save_error_still_stops_the_session(mc: ModuleType) -> None:
     with pytest.raises(OSError, match="disk full"):
         mc._save_episode(_Episode(OSError("disk full")))
+
+
+# ------------------------------------------------------------------ one folder per task
+
+
+@pytest.mark.parametrize(
+    ("task", "folder"),
+    [
+        ("pick up the red cube", "pick-up-the-red-cube"),
+        ("  Pick Up: the RED cube!!  ", "pick-up-the-red-cube"),
+        ("Recoge el cubo, ñandú café", "recoge-el-cubo-nandu-cafe"),
+        ("../../etc/passwd", "etc-passwd"),
+        ("a/b\\c", "a-b-c"),
+        ("CUBE_2 v3", "cube-2-v3"),
+    ],
+)
+def test_a_task_names_its_folder(mc: ModuleType, task: str, folder: str) -> None:
+    assert mc._task_folder(task) == folder
+
+
+def test_a_long_task_gives_a_short_folder_without_a_trailing_hyphen(mc: ModuleType) -> None:
+    folder = mc._task_folder("word " * 40)
+    assert len(folder) <= mc.FOLDER_MAX_CHARS and not folder.endswith("-") and folder.startswith("word-word")
+
+
+def test_a_task_without_latin_letters_still_gets_a_folder_of_its_own(mc: ModuleType) -> None:
+    assert mc._task_folder("日本語") != mc._task_folder("中文")
+    assert mc._task_folder("日本語") == mc._task_folder("日本語")
+    assert mc._task_folder("日本語").startswith("task-") and mc._task_folder("!!!").startswith("task-")
+
+
+@pytest.mark.parametrize("task", ["..", ".", "/", "a/../../b", "~", "$(rm -rf x)", "name\x00x", "", "   "])
+def test_a_folder_name_can_never_leave_the_root(mc: ModuleType, tmp_path: pathlib.Path, task: str) -> None:
+    path = tmp_path / mc._task_folder(task)
+    assert path.parent == tmp_path and path.name not in ("", ".", "..")
+
+
+class _FakeWriter:
+    def __init__(self, root: pathlib.Path) -> None:
+        self.root = root
+        self.total_episodes = 0
+
+
+def _folders(mc: ModuleType, root: pathlib.Path, *, pinned: pathlib.Path | None = None):
+    """A _TaskFolders over fake writers, with the list of folders it opened and the folder names it should refuse."""
+    opened: list[pathlib.Path] = []
+    refused: set[str] = set()
+
+    def open_writer(path: pathlib.Path) -> _FakeWriter:
+        if path.name in refused:
+            raise dataset.DatasetError(f"{path} holds a dataset recorded another way")
+        opened.append(path)
+        return _FakeWriter(path)
+
+    return mc._TaskFolders(root, open_writer, pinned=pinned), opened, refused
+
+
+def test_setting_a_task_creates_its_folder(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    folders, opened, _ = _folders(mc, tmp_path / "hackathon_data")  # the root does not exist yet
+    assert folders.folder is None
+    assert folders.use("Pick up the cube") is True
+    assert (tmp_path / "hackathon_data" / "pick-up-the-cube").is_dir()
+    assert folders.folder == tmp_path / "hackathon_data" / "pick-up-the-cube" and folders.error is None
+
+
+def test_the_same_task_keeps_the_open_dataset(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    folders, opened, _ = _folders(mc, tmp_path)
+    folders.use("Pick up the cube")
+    writer = folders.writer
+    assert folders.use("pick up the CUBE!") is True
+    assert folders.writer is writer and len(opened) == 1
+
+
+def test_a_new_task_gets_a_new_folder_and_the_old_one_stays(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    folders, _, _ = _folders(mc, tmp_path)
+    folders.use("stack the blocks")
+    folders.use("pour the water")
+    assert (tmp_path / "stack-the-blocks").is_dir() and (tmp_path / "pour-the-water").is_dir()
+    assert folders.folder == tmp_path / "pour-the-water"
+
+
+def test_a_folder_that_cannot_be_opened_is_reported(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    folders, _, refused = _folders(mc, tmp_path)
+    folders.use("stack the blocks")
+    refused.add("pour-the-water")
+    assert folders.use("pour the water") is False
+    assert "recorded another way" in folders.error
+    assert folders.folder == tmp_path / "stack-the-blocks"  # still the old one: the caller must not record into it
+    refused.clear()
+    assert folders.use("pour the water") is True and folders.error is None
+    assert folders.folder == tmp_path / "pour-the-water"
+
+
+def test_a_root_that_is_a_file_is_reported(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    (tmp_path / "hackathon_data").write_text("not a folder")
+    folders, _, _ = _folders(mc, tmp_path / "hackathon_data")
+    assert folders.use("stack the blocks") is False
+    assert folders.error and folders.folder is None
+
+
+def test_a_pinned_folder_ignores_the_task(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    pinned = tmp_path / "my-task"
+    folders, opened, _ = _folders(mc, tmp_path, pinned=pinned)
+    assert folders.use("anything") is True and folders.use("something else") is True
+    assert opened == [pinned] and not (tmp_path / "anything").exists()
+
+
+def test_a_new_task_asks_the_loop_for_its_folder(server: _Server) -> None:
+    before = server.state.task_version
+    assert _post_task(server, b'{"task": "stack the blocks"}')[0] == 200
+    assert server.state.task == "stack the blocks" and server.state.task_version == before + 1
+
+
+def test_a_blank_task_is_refused_when_the_task_names_the_folder(server: _Server) -> None:
+    server.state.per_task = True
+    assert _post_task(server, b'{"task": "   "}')[0] == 400
+    assert server.state.task == "pick it up" and server.state.task_version == 0
+
+
+def test_a_blank_task_still_resets_a_pinned_session(server: _Server) -> None:
+    assert _post_task(server, b'{"task": "   "}')[0] == 200 and server.state.task == ""
+
+
+def test_the_status_shows_the_folder(server: _Server) -> None:
+    server.state.per_task = True
+    server.state.folder = "/data/stack-the-blocks"
+    status, body = _raw(server.port, "GET", "/api/status", {"Host": f"127.0.0.1:{server.port}"})
+    snap = json.loads(body)
+    assert status == 200 and snap["per_task"] is True and snap["folder"] == "/data/stack-the-blocks"
+    assert snap["folder_error"] == ""
+
+
+def test_the_page_has_a_place_for_the_folder(mc: ModuleType) -> None:
+    assert 'id="folder"' in mc._PAGE
+
+
+def test_episodes_are_saved_in_the_folder_of_their_task(mc: ModuleType, tmp_path: pathlib.Path) -> None:
+    """With the real dataset writer: each task's episodes land in its own folder, which later episodes continue."""
+    keys = list(layouts.video_keys("makermods").values())
+    names = [f"v{i}" for i in range(layouts.WIDTH)]
+    folders = mc._TaskFolders(tmp_path, lambda path: dataset.DatasetWriter(path, 30, "metal", names, keys, 320, 180))
+    image = np.zeros((180, 320, 3), np.uint8)
+
+    def record(task: str) -> int:
+        assert folders.use(task)
+        episode = folders.writer.start_episode(task)
+        for _ in range(60):
+            episode.add_frame(
+                np.zeros(layouts.WIDTH, np.float32), np.zeros(layouts.WIDTH, np.float32), dict.fromkeys(keys, image)
+            )
+        return episode.save()
+
+    assert record("stack the blocks") == 0
+    assert record("pour the water") == 0  # a new folder starts at episode 0
+    assert record("Stack the blocks!") == 1  # the first task's folder goes on from where it stopped
+    for name, episodes in (("stack-the-blocks", 2), ("pour-the-water", 1)):
+        info = json.loads((tmp_path / name / "meta" / "info.json").read_text())
+        assert info["total_episodes"] == episodes, name
+    assert (tmp_path / "stack-the-blocks" / "data" / "chunk-000" / "episode_000001.parquet").exists()
+    tasks = (tmp_path / "stack-the-blocks" / "meta" / "tasks.jsonl").read_text().splitlines()
+    assert {json.loads(line)["task"] for line in tasks} == {"stack the blocks", "Stack the blocks!"}
