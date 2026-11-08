@@ -75,6 +75,11 @@ def _gripper_deg(arm_cfg, grip: float) -> float:
     return arm_cfg.gripper_closed_deg + min(1.0, max(-1.0, grip)) * (arm_cfg.gripper_open_deg - arm_cfg.gripper_closed_deg)
 
 
+def _step_toward(current: np.ndarray, target: np.ndarray, max_step: float) -> np.ndarray:
+    """Moves every joint from `current` toward `target` by at most `max_step`."""
+    return current + np.clip(target - current, -max_step, max_step)
+
+
 def _command_follower(device, arm_cfg, joints_rad: np.ndarray, grip: float, grip_extra: float = 0.0) -> None:
     action = {f"{m}.pos": math.degrees(v) for m, v in zip(MOTORS, joints_rad)}
     # grip_extra shifts the follower gripper more closed than the leader (closes the gap at the hard stop).
@@ -105,6 +110,7 @@ class _DashState:
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
     recording: bool = False
     homing: bool = False
+    syncing: bool = False
     frames: int = 0
     total_episodes: int = 0
     task: str = ""
@@ -218,6 +224,7 @@ function pollStatus() {
     const mode = document.getElementById('mode');
     if (s.homing)         { mode.className = 'homing'; mode.innerHTML = '&#8629; HOMING'; }
     else if (s.recording) { mode.className = 'rec';    mode.innerHTML = '&#9679; REC'; }
+    else if (s.syncing)   { mode.className = 'homing'; mode.innerHTML = '&#8644; SYNCING TO LEADER'; }
     else                  { mode.className = 'idle';   mode.innerHTML = '&#9675; idle'; }
 
     document.getElementById('frames').textContent = s.frames + ' frames';
@@ -226,7 +233,7 @@ function pollStatus() {
     document.getElementById('grip').textContent   = 'grip=' + (s.leader_grip != null ? s.leader_grip.toFixed(2) : '\\u2014');
 
     const busy = s.recording || s.homing;
-    document.getElementById('btn-primary').disabled  = s.homing;
+    document.getElementById('btn-primary').disabled  = s.homing || (s.syncing && !s.recording);
     document.getElementById('btn-primary').textContent = s.recording ? 'Save Episode' : 'Start Episode';
     document.getElementById('btn-discard').disabled  = !s.recording;
     document.getElementById('btn-home').disabled     = busy;
@@ -258,6 +265,7 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
                     snap = {
                         "recording": dash_state.recording,
                         "homing": dash_state.homing,
+                        "syncing": dash_state.syncing,
                         "frames": dash_state.frames,
                         "total_episodes": dash_state.total_episodes,
                         "task": dash_state.task,
@@ -452,26 +460,20 @@ def main() -> None:
     home_grip = 1.0  # open gripper at home
     print(f"  {args.follower}: connected (energized)")
 
-    # ---- move follower to home
-    print("Moving follower to home pose ...")
-    HOME_SPEED = 0.5  # rad/s
-    dt_home = 1.0 / station.control_hz
-    while True:
-        try:
-            curr_degs = _read_follower_degs(follower_dev)
-            curr_joints = np.radians([curr_degs[m] for m in MOTORS])
-        except Exception:
-            break
-        delta = home_joints - curr_joints
-        dist = float(np.max(np.abs(delta)))
-        if dist < 1e-3:
-            break
-        step = np.clip(delta, -HOME_SPEED * dt_home, HOME_SPEED * dt_home)
-        _command_follower(follower_dev, follower_cfg, curr_joints + step, home_grip, args.grip_extra)
-        time.sleep(dt_home)
-    print("  follower at home.")
-
-    time.sleep(0.5)
+    # ---- easing (syncing) to the leader
+    # The follower never jumps to the leader's pose: at startup, and again after homing, it first eases there at
+    # SYNC_SPEED (the loop's "syncing" phase), and only then mirrors the leader live.
+    HOME_SPEED = 0.5  # rad/s, the "Go to Home" move
+    SYNC_SPEED = 0.5  # rad/s, easing to the leader's pose
+    SYNC_GRIP_SPEED = 0.5  # gripper fraction per second while easing
+    SYNC_TOLERANCE_RAD = math.radians(3.0)  # mirroring starts once every joint is this close
+    SYNC_GRIP_TOLERANCE = 0.05
+    # What the follower was last commanded: every move steps from here, never from a (possibly failed) reading.
+    cmd_joints = home_joints.copy()
+    cmd_grip = _degs_to_joints_grip(_home_degs, follower_cfg)[1]
+    last_leader: tuple[np.ndarray, float] | None = None
+    syncing = True
+    print("Easing the follower to the leader's pose (slowly) before mirroring ...")
 
     # ---- dataset writer
     state_names = []
@@ -516,10 +518,13 @@ def main() -> None:
             try:
                 leader_degs = _read_leader_degs(leader_dev, leader_gravity)
                 leader_joints, leader_grip = _degs_to_joints_grip(leader_degs, leader_cfg)
+                leader_ok = True
+                last_leader = (leader_joints, leader_grip)
             except Exception as e:
-                print(f"leader read error: {e}")
-                leader_joints = np.zeros(6)
-                leader_grip = 0.0
+                # Never chase a made-up pose: the follower holds where it was commanded until the leader reads again.
+                print(f"leader read error: {e} (follower holds)")
+                leader_ok = False
+                leader_joints, leader_grip = last_leader if last_leader is not None else (cmd_joints.copy(), cmd_grip)
 
             try:
                 follower_degs = _read_follower_degs(follower_dev)
@@ -529,24 +534,30 @@ def main() -> None:
                 follower_joints = np.zeros(6)
                 follower_grip = 0.0
 
-            # Command follower: home sequence takes priority over mirroring
+            # Command follower: homing first, then easing to the leader, then mirroring
+            send = True
             if _homing_now:
-                try:
-                    curr_joints = follower_joints
-                    delta = home_joints - curr_joints
-                    dist = float(np.max(np.abs(delta)))
-                    if dist < 1e-3:
-                        with dash_state.lock:
-                            dash_state.homing = False
-                        print("↩ Home reached.")
-                    else:
-                        step = np.clip(delta, -HOME_SPEED * dt, HOME_SPEED * dt)
-                        _command_follower(follower_dev, follower_cfg, curr_joints + step, home_grip, args.grip_extra)
-                except Exception as e:
-                    print(f"home step error: {e}")
+                cmd_joints = _step_toward(cmd_joints, home_joints, HOME_SPEED * dt)
+                cmd_grip = float(_step_toward(np.array([cmd_grip]), np.array([home_grip]), SYNC_GRIP_SPEED * dt)[0])
+                if np.array_equal(cmd_joints, home_joints):
+                    with dash_state.lock:
+                        dash_state.homing = False
+                    syncing = True
+                    print("↩ Home reached. Easing back to the leader's pose before mirroring ...")
+            elif not leader_ok:
+                send = False  # hold: the follower stays where it was last commanded
+            elif syncing:
+                cmd_joints = _step_toward(cmd_joints, leader_joints, SYNC_SPEED * dt)
+                cmd_grip = float(_step_toward(np.array([cmd_grip]), np.array([leader_grip]), SYNC_GRIP_SPEED * dt)[0])
+                gap = float(np.max(np.abs(leader_joints - cmd_joints)))
+                if gap <= SYNC_TOLERANCE_RAD and abs(leader_grip - cmd_grip) <= SYNC_GRIP_TOLERANCE:
+                    syncing = False
+                    print("⇄ Follower reached the leader: mirroring live.")
             else:
+                cmd_joints, cmd_grip = leader_joints.copy(), leader_grip
+            if send:
                 try:
-                    _command_follower(follower_dev, follower_cfg, leader_joints, leader_grip, args.grip_extra)
+                    _command_follower(follower_dev, follower_cfg, cmd_joints, cmd_grip, args.grip_extra)
                 except Exception as e:
                     print(f"command error: {e}")
 
@@ -566,6 +577,7 @@ def main() -> None:
             # Update dashboard state
             with dash_state.lock:
                 dash_state.recording = episode is not None
+                dash_state.syncing = syncing
                 dash_state.frames = episode.frames if episode is not None else 0
                 dash_state.total_episodes = writer.total_episodes
                 dash_state.leader_grip = leader_grip
@@ -584,6 +596,8 @@ def main() -> None:
                         task_text = dash_state.task or "mirror teleoperation"
                     if _is_homing:
                         print("(cannot start while homing — wait for home to complete)")
+                    elif syncing and episode is None:
+                        print("(cannot start while the follower eases to the leader — wait for 'mirroring live')")
                     elif episode is None:
                         episode = writer.start_episode(task_text)
                         print(f"● Recording episode {writer.total_episodes} ...")
@@ -613,7 +627,12 @@ def main() -> None:
 
             # Print status every ~2s
             if tick % (station.control_hz * 2) == 0:
-                status = "● REC" if episode is not None else ("↩ HOME" if _homing_now else "○ idle")
+                if episode is not None:
+                    status = "● REC"
+                elif _homing_now:
+                    status = "↩ HOME"
+                else:
+                    status = "⇄ SYNC" if syncing else "○ idle"
                 pan = math.degrees(leader_joints[0])
                 print(f"{status}  shoulder_pan={pan:+.1f}°  grip={leader_grip:.2f}  episodes={writer.total_episodes}")
 
