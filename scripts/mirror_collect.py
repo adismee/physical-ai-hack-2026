@@ -193,7 +193,30 @@ def main() -> None:
     FAMILY.prepare_leader_following(follower_dev)
     follower_dev.connect(calibrate=False)
     rest_poses = list(FAMILY.capture_rest_poses(follower_dev))
+    # Capture follower start joints (home pose) right after connect.
+    _home_degs = _read_follower_degs(follower_dev)
+    home_joints = np.radians([_home_degs[m] for m in MOTORS])
+    home_grip = 1.0  # open gripper at home
     print(f"  {args.follower}: connected (energized)")
+
+    # ---- move follower to home
+    print("Moving follower to home pose ...")
+    HOME_SPEED = 0.5  # rad/s
+    dt_home = 1.0 / station.control_hz
+    while True:
+        try:
+            curr_degs = _read_follower_degs(follower_dev)
+            curr_joints = np.radians([curr_degs[m] for m in MOTORS])
+        except Exception:
+            break
+        delta = home_joints - curr_joints
+        dist = float(np.max(np.abs(delta)))
+        if dist < 1e-3:
+            break
+        step = np.clip(delta, -HOME_SPEED * dt_home, HOME_SPEED * dt_home)
+        _command_follower(follower_dev, follower_cfg, curr_joints + step, home_grip, args.grip_extra)
+        time.sleep(dt_home)
+    print("  follower at home.")
 
     time.sleep(0.5)
 
