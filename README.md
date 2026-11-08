@@ -1,5 +1,16 @@
 # Dream Hackathon Kit
 
+## Collect demonstrations by moving the left arm
+
+No Quest? Take the **left arm** in your hand and the **right arm** copies it, while a dashboard in your browser starts, saves and discards the episodes. It records the same LeRobot v2.1 datasets as the Quest, and works on Metal and Maker arm stations. **[How to run it: docs/mirror_collect.md](docs/mirror_collect.md).**
+
+```bash
+# 🤖 on the station: REAL RUN, the right arm moves (there is no dry run)
+uv run python scripts/mirror_collect.py --config configs/station.yaml --task "pick up the red cube" --gravity
+```
+
+Read the guide's safety notes first: the right arm is energized and follows the left arm from the moment the script opens it. Leave out `--gravity` on a Maker arm station.
+
 Put Dream-1, the Dream Labs robot model, to work on a pair of robot arms: run it as it is, build your own project on the Dream API, or teach it your task with demonstrations you record with a Meta Quest and fine-tune it on them (optional).
 
 Built for the [MakerMods Physical AI Hackathon](https://luma.com/pah) (November 7-8, San Francisco), presented with MakerMods and Dream Labs.
@@ -162,8 +173,8 @@ No arms yet? On a YAM config, `uv run dhk-collect --config configs/yam.yaml --si
 | `src/dream_hackathon/embodiments/` | The Dream embodiment configs your fine-tunes are registered with |
 | `configs/` | One template station config per arm type; a station's own is `configs/station.yaml` (not committed) |
 | `tools/` | Dream API steps, run in the Dream library's environment: `add_eef.py`, `finetune.py` |
-| `scripts/` | Device checks, the URDF download, and station helpers: `use_dream_tcp.py` (Dream's tool point for Metal and Maker arms), `allow_can_bringup.sh` (the dashboard's CAN buttons), `remove_api_key.sh`, `wipe_station.sh` |
-| `docs/` | Collection, fine-tuning, running and setup guides |
+| `scripts/` | Device checks, the URDF download, `mirror_collect.py` (move the left arm, the right copies it), and station helpers: `use_dream_tcp.py` (Dream's tool point for Metal and Maker arms), `allow_can_bringup.sh` (the dashboard's CAN buttons), `remove_api_key.sh`, `wipe_station.sh` |
+| `docs/` | Collection (Quest, and the left arm), fine-tuning, running and setup guides |
 | `CLAUDE.md`, `.claude/skills/` | Claude Code's rules for this repo and the `station-setup` skill |
 
 Run the tests with `uv sync --group dream && uv run pytest` (no hardware needed).
