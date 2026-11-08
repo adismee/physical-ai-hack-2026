@@ -8,7 +8,9 @@ Usage (THE RIGHT ARM WILL MOVE — support it before starting):
         --config configs/station.yaml \\
         --task "pick up the red cube"
 
-    # Gravity compensation / weightless mode (Metal arms only, requires pinocchio):
+    # The same with the left arm weightless (gravity compensation; Metal arms only, requires pinocchio). Without
+    # --gravity the left arm is opened torque-off and you carry its full weight. The dashboard and the console say
+    # which one is running, and an episode's start line repeats it.
     uv run python scripts/mirror_collect.py \\
         --config configs/station.yaml \\
         --task "pick up the red cube" \\
@@ -59,6 +61,16 @@ HOME_TIMEOUT_S = 30.0
 ## The task an episode records when none is given, and the longest task text Dream accepts (as in collect.py).
 DEFAULT_TASK = "mirror teleoperation"
 TASK_MAX_CHARS = 512
+## How the leader arm is held, as the dashboard and the console report it. Without gravity compensation its motors are
+## off, so the person carries the arm's weight and its gearbox friction.
+LEADER_GRAVITY = "gravity"
+LEADER_TORQUE_OFF = "torque_off"
+LEADER_GRAVITY_FAILED = "gravity_failed"
+_LEADER_MODE_TEXT = {
+    LEADER_GRAVITY: "gravity compensation",
+    LEADER_TORQUE_OFF: "torque off, no gravity compensation",
+    LEADER_GRAVITY_FAILED: "torque off, --gravity FAILED",
+}
 ## The dashboard reads at most this many bytes of a request body, and waits this long for a client's bytes.
 MAX_BODY_BYTES = 4096
 REQUEST_TIMEOUT_S = 5
@@ -172,6 +184,22 @@ def _clean_task(text: str) -> str:
     return _CONTROL_CHARACTERS.sub(" ", text).strip()[:TASK_MAX_CHARS].rstrip()
 
 
+def _leader_mode(gravity_asked: bool, gravity_active: bool) -> str:
+    """How the leader arm is held: LEADER_GRAVITY once compensation runs, else torque off.
+
+    A torque-off arm that was asked for gravity compensation is reported as LEADER_GRAVITY_FAILED, so a silent fallback
+    cannot pass for the mode that was wanted.
+    """
+    if gravity_active:
+        return LEADER_GRAVITY
+    return LEADER_GRAVITY_FAILED if gravity_asked else LEADER_TORQUE_OFF
+
+
+def _leader_mode_label(mode: str, side: str) -> str:
+    """The words for a leader mode, e.g. "left arm: gravity compensation"."""
+    return f"{side} arm: {_LEADER_MODE_TEXT[mode]}"
+
+
 def _host_allowed(host: str | None) -> bool:
     """True when a request's Host header names the loopback address the dashboard is served on."""
     return host is not None and _LOOPBACK_HOST.fullmatch(host.strip().lower()) is not None
@@ -270,6 +298,9 @@ class _DashState:
     task: str = ""
     leader_grip: float = 0.0
     shoulder_pan_deg: float = 0.0
+    ## One of the LEADER_* modes and its words; empty until the leader arm is open.
+    leader_mode: str = ""
+    leader_mode_label: str = ""
     camera_roles: list = dataclasses.field(default_factory=list)
     # True when the task names the dataset folder; `folder` is the open one, `folder_error` why a task's could not be
     # opened, and `task_version` counts the tasks set from the page (the control loop opens the folder of a new one).
@@ -299,6 +330,9 @@ _PAGE = """\
   .idle { color: #666; }
   #folder { color: #8ab; font-size: 0.8rem; word-break: break-all; margin: -0.5rem 0 1rem; }
   #folder.err { color: #f55; }
+  .gravity { color: #8f8; }
+  .torque_off { color: #fa0; }
+  .gravity_failed { color: #f55; font-weight: bold; }
   #controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
   button { font-family: monospace; font-size: 0.9rem; padding: 0.45rem 1rem; border: 1px solid #444; background: #1e1e1e; color: #ccc; cursor: pointer; border-radius: 3px; }
   button:hover:not(:disabled) { background: #2a2a2a; border-color: #666; }
@@ -317,6 +351,7 @@ _PAGE = """\
 <div id="cameras"></div>
 <div id="status-bar">
   <span id="mode" class="idle">&#9675; idle</span>
+  <span id="leader">leader arm: opening&#8230;</span>
   <span id="frames">0 frames</span>
   <span id="epcnt">0 episodes</span>
   <span id="pan">pan=&#8212;</span>
@@ -389,6 +424,10 @@ function pollStatus() {
     else if (s.recording) { mode.className = 'rec';    mode.innerHTML = '&#9679; REC'; }
     else                  { mode.className = 'idle';   mode.innerHTML = '&#9675; idle'; }
 
+    const leader = document.getElementById('leader');
+    leader.className = s.leader_mode || '';
+    leader.textContent = s.leader_mode_label || 'leader arm: opening\\u2026';
+
     document.getElementById('frames').textContent = s.frames + ' frames';
     document.getElementById('epcnt').textContent  = s.total_episodes + ' episodes';
     document.getElementById('pan').textContent    = 'pan=' + (s.shoulder_pan_deg != null ? s.shoulder_pan_deg.toFixed(1) + '\\u00b0' : '\\u2014');
@@ -446,6 +485,8 @@ def _make_handler(dash_state: _DashState, cmd_q: "queue.Queue[str]", cams: dict)
                         "task": dash_state.task,
                         "leader_grip": dash_state.leader_grip,
                         "shoulder_pan_deg": dash_state.shoulder_pan_deg,
+                        "leader_mode": dash_state.leader_mode,
+                        "leader_mode_label": dash_state.leader_mode_label,
                         "cameras": list(dash_state.camera_roles),
                         "per_task": dash_state.per_task,
                         "folder": dash_state.folder,
@@ -653,6 +694,13 @@ def main() -> None:
         leader_dev.bus.disable_torque()
         print(f"  {args.leader}: connected (torque off — move it by hand)")
 
+    leader_mode = _leader_mode(args.gravity, leader_gravity)
+    leader_label = _leader_mode_label(leader_mode, args.leader)
+    with dash_state.lock:
+        dash_state.leader_mode = leader_mode
+        dash_state.leader_mode_label = leader_label
+    print(f"  {leader_label}")
+
     # ---- open follower arm (energized — THE ARM WILL MOVE)
     print(f"Opening {args.follower} arm (energized — follower, THE ARM WILL MOVE) ...")
     follower_cfg = station.arms[args.follower]
@@ -851,7 +899,10 @@ def main() -> None:
                         print(f"✗ Cannot start: {folders.error}")
                     elif action == "start":
                         episode = folders.writer.start_episode(task_text)
-                        print(f"● Recording episode {folders.saved_episodes} in {folders.folder.name} ...")
+                        print(
+                            f"● Recording episode {folders.saved_episodes} in {folders.folder.name} ...  "
+                            f"({leader_label})"
+                        )
                     elif action == "save":
                         idx = _save_episode(episode)
                         if idx is not None:

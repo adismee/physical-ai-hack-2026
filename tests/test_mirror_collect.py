@@ -147,6 +147,41 @@ def test_what_a_start_or_save_command_does(mc: ModuleType, cmd: str, recording: 
     assert mc._episode_action(cmd, recording) == action
 
 
+# ------------------------------------------------------------------ how the leader arm is held
+
+
+@pytest.mark.parametrize(
+    ("asked", "active", "mode"),
+    [
+        (False, False, "torque_off"),  # no --gravity: the person carries the arm
+        (True, True, "gravity"),
+        (True, False, "gravity_failed"),  # asked for, but it fell back to torque off: must not look like torque off
+    ],
+)
+def test_the_leader_mode_tells_a_failed_gravity_from_none_asked(
+    mc: ModuleType, asked: bool, active: bool, mode: str
+) -> None:
+    assert mc._leader_mode(asked, active) == mode
+
+
+def test_every_leader_mode_has_words_naming_the_arm(mc: ModuleType) -> None:
+    labels = {mode: mc._leader_mode_label(mode, "left") for mode in ("gravity", "torque_off", "gravity_failed")}
+    assert labels["gravity"] == "left arm: gravity compensation"
+    assert all(label.startswith("left arm: ") for label in labels.values())
+    assert len(set(labels.values())) == 3
+
+
+def test_the_status_reports_how_the_leader_is_held(server: _Server, mc: ModuleType) -> None:
+    status, payload = _raw(server.port, "GET", "/api/status", {"Host": f"127.0.0.1:{server.port}"})
+    assert status == 200 and json.loads(payload)["leader_mode"] == ""  # the leader is not open yet
+    with server.state.lock:
+        server.state.leader_mode = mc.LEADER_TORQUE_OFF
+        server.state.leader_mode_label = mc._leader_mode_label(mc.LEADER_TORQUE_OFF, "left")
+    snap = json.loads(_raw(server.port, "GET", "/api/status", {"Host": f"127.0.0.1:{server.port}"})[1])
+    assert snap["leader_mode"] == "torque_off"
+    assert snap["leader_mode_label"] == "left arm: torque off, no gravity compensation"
+
+
 # ------------------------------------------------------------------ the task text
 
 
